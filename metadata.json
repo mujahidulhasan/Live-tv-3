@@ -1,0 +1,7 @@
+{
+  "name": "Neon Ultra IPTV Pro",
+  "description": "High-end IPTV player with Neon aesthetics, Secure Admin, and multi-digit remote dialing.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}

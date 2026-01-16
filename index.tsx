@@ -19,56 +19,58 @@ interface WatermarkConfig {
   url: string;
 }
 
-interface DevConfig {
-  photo: string;
-  name: string;
-  note: string;
-}
+// --- Constants ---
+const ADMIN_USERNAME = "admin";
+const ADMIN_PASSWORD = "password123";
 
 // --- App Component ---
 const App = () => {
-  const [isAdmin, setIsAdmin] = useState(window.location.hash === '#admin');
+  // Navigation & Auth
+  const [route, setRoute] = useState<'player' | 'admin-login' | 'admin-panel'>(() => {
+    return window.location.hash === '#admin' ? 'admin-login' : 'player';
+  });
+  const [loginUser, setLoginUser] = useState('');
+  const [loginPass, setLoginPass] = useState('');
+
+  // Data
   const [channels, setChannels] = useState<Channel[]>([]);
   const [categories, setCategories] = useState<string[]>(['All']);
   const [currentIdx, setCurrentIdx] = useState<number>(-1);
   const [currentCatIdx, setCurrentCatIdx] = useState(0);
   const [deadChannelIds, setDeadChannelIds] = useState<Set<string>>(new Set());
 
+  // UI
   const [isPowerOn, setIsPowerOn] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
-  const [volume, setVolume] = useState(80);
+  const [volume, setVolume] = useState(100);
   const [isLandscape, setIsLandscape] = useState(false);
+  const [isRemoteMinimized, setIsRemoteMinimized] = useState(false);
   const [toast, setToast] = useState<{ msg: string; show: boolean }>({ msg: '', show: false });
   const [activeModal, setActiveModal] = useState<string | null>(null);
 
-  const [isListening, setIsListening] = useState(false);
-  const [assistantText, setAssistantText] = useState('');
+  // Dialing
+  const [dialBuffer, setDialBuffer] = useState('');
+  const dialTimeoutRef = useRef<number | null>(null);
 
+  // Admin Config
+  const [manualM3U, setManualM3U] = useState('');
+  const [m3uUrl, setM3uUrl] = useState('');
   const [watermark, setWatermark] = useState<WatermarkConfig>(() => {
     try {
       const saved = localStorage.getItem('ultra_iptv_watermark');
-      return saved ? JSON.parse(saved) : { opacity: 0.5, top: 10, left: 10, url: 'https://cdn-icons-png.flaticon.com/512/717/717426.png' };
+      return saved ? JSON.parse(saved) : { opacity: 0.5, top: 5, left: 5, url: '' };
     } catch {
-      return { opacity: 0.5, top: 10, left: 10, url: '' };
-    }
-  });
-
-  const [dev, setDev] = useState<DevConfig>(() => {
-    try {
-      const saved = localStorage.getItem('ultra_iptv_dev');
-      return saved ? JSON.parse(saved) : { photo: 'https://via.placeholder.com/150?text=Mujahid', name: 'Mujahid', note: "I build highly responsive and aesthetic UI experiences." };
-    } catch {
-      return { photo: 'https://via.placeholder.com/150?text=Mujahid', name: 'Mujahid', note: "" };
+      return { opacity: 0.5, top: 5, left: 5, url: '' };
     }
   });
 
   const videoRef = useRef<HTMLVideoElement>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const playPromiseRef = useRef<Promise<void> | null>(null);
 
   const showToast = (msg: string) => {
     setToast({ msg, show: true });
-    setTimeout(() => setToast({ msg: '', show: false }), 3000);
+    setTimeout(() => setToast({ msg: '', show: false }), 4000);
   };
 
   const updateCategories = (list: Channel[]) => {
@@ -77,10 +79,7 @@ const App = () => {
   };
 
   const parseM3U = (data: string) => {
-    if (!data || !data.includes('#EXTM3U')) {
-      showToast("Invalid M3U Header");
-    }
-    
+    if (!data || data.trim().length === 0) return false;
     const lines = data.split(/\r?\n/);
     const newChannels: Channel[] = [];
     let currentMetadata: Partial<Channel> | null = null;
@@ -88,147 +87,143 @@ const App = () => {
     for (let line of lines) {
       line = line.trim();
       if (!line) continue;
-
-      if (line.startsWith('#EXTINF:')) {
-        // Advanced metadata extraction
-        const nameParts = line.split(',');
-        const name = nameParts.length > 1 ? nameParts[nameParts.length - 1].trim() : 'Unknown Channel';
-        
-        const logoMatch = line.match(/tvg-logo="([^"]+)"/i);
-        const groupMatch = line.match(/group-title="([^"]+)"/i);
-        
+      if (line.toUpperCase().includes('#EXTINF:')) {
+        const lastCommaIndex = line.lastIndexOf(',');
+        const name = lastCommaIndex !== -1 ? line.substring(lastCommaIndex + 1).trim() : 'Unknown';
+        const logoMatch = line.match(/tvg-logo="([^"]+)"/i) || line.match(/logo="([^"]+)"/i);
+        const groupMatch = line.match(/group-title="([^"]+)"/i) || line.match(/category="([^"]+)"/i);
         currentMetadata = {
-          id: Math.random().toString(36).substring(2, 11),
+          id: `ch-${Math.random().toString(36).substring(2, 9)}`,
           name: name,
           logo: logoMatch ? logoMatch[1] : '',
           category: groupMatch ? groupMatch[1] : 'General'
         };
-      } else if (!line.startsWith('#')) {
+      } else if (line.startsWith('http')) {
         if (currentMetadata) {
           currentMetadata.url = line;
           newChannels.push(currentMetadata as Channel);
           currentMetadata = null;
+        } else {
+          newChannels.push({ id: `stream-${newChannels.length}`, name: `Stream ${newChannels.length + 1}`, url: line, category: 'Other' });
         }
       }
     }
-
     if (newChannels.length > 0) {
       setChannels(newChannels);
       updateCategories(newChannels);
       localStorage.setItem('ultra_iptv_channels', JSON.stringify(newChannels));
-      showToast(`${newChannels.length} Channels Synced`);
+      showToast(`${newChannels.length} Channels Loaded`);
       return true;
     }
     return false;
   };
 
-  const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      const content = e.target?.result;
-      if (typeof content === 'string') {
-        const success = parseM3U(content);
-        if (!success) showToast("No channels found in file");
+  const loadFromUrl = async (url: string) => {
+    if (!url) return;
+    showToast("Fetching External Feed...");
+    try {
+      const res = await fetch(url);
+      if (res.ok) {
+        const text = await res.text();
+        parseM3U(text);
+      } else {
+        showToast("Fetch Failed: " + res.status);
       }
-    };
-    reader.readAsText(file);
+    } catch (e) {
+      showToast("Network Error: Check CORS settings");
+    }
   };
 
-  const setDemoChannels = () => {
-    const demo = [
-      { id: 'd1', name: 'Demo Somoy TV', url: 'https://cdn-1.toffeelive.com/somoy/index.m3u8', category: 'News', logo: 'https://seeklogo.com/images/S/somoy-tv-logo-87B757523F-seeklogo.com.png' },
-      { id: 'd2', name: 'Demo T Sports', url: 'https://cdn-1.toffeelive.com/tsports/index.m3u8', category: 'Sports', logo: 'https://tsports.com/static/media/tsports-logo.8e7b99c2.png' },
-      { id: 'd3', name: 'Demo Channel I', url: 'https://cdn-1.toffeelive.com/channel-i/index.m3u8', category: 'Entertainment', logo: 'https://i.ytimg.com/vi/u4_e6lV_O0c/maxresdefault.jpg' }
-    ];
-    setChannels(demo);
-    updateCategories(demo);
+  const loadData = async (force = false) => {
+    const paths = ['tv.m3u8', 'tv.m3u'];
+    let found = false;
+    for (const path of paths) {
+      try {
+        const res = await fetch(`${path}?t=${Date.now()}`, { cache: 'no-store' });
+        if (res.ok) {
+          const text = await res.text();
+          if (text.includes('#EXTINF') || text.includes('http')) {
+            found = parseM3U(text);
+            if (found) break;
+          }
+        }
+      } catch (e) {}
+    }
+    if (!found && !force) {
+      const saved = localStorage.getItem('ultra_iptv_channels');
+      if (saved) {
+        try {
+          const parsed = JSON.parse(saved);
+          if (parsed && parsed.length > 0) {
+            setChannels(parsed);
+            updateCategories(parsed);
+            found = true;
+          }
+        } catch {}
+      }
+    }
   };
 
   useEffect(() => {
-    const handleHash = () => setIsAdmin(window.location.hash === '#admin');
-    window.addEventListener('hashchange', handleHash);
-
-    const loadData = async () => {
-      const paths = ['/tv.mu3', '/tv.m3u', 'tv.mu3', 'tv.m3u'];
-      let found = false;
-      
-      for (const path of paths) {
-        try {
-          const res = await fetch(path);
-          if (res.ok) {
-            const text = await res.text();
-            if (text.includes('#EXTINF')) {
-              found = parseM3U(text);
-              if (found) break;
-            }
-          }
-        } catch (e) {}
-      }
-
-      if (!found) {
-        const saved = localStorage.getItem('ultra_iptv_channels');
-        if (saved) {
-          try {
-            const parsed = JSON.parse(saved);
-            if (parsed && parsed.length > 0) {
-              setChannels(parsed);
-              updateCategories(parsed);
-              found = true;
-            }
-          } catch {}
-        }
-      }
-
-      if (!found) {
-        setDemoChannels();
-      }
-    };
-
     loadData();
+    const handleHash = () => {
+      if (window.location.hash === '#admin') setRoute('admin-login');
+      else setRoute('player');
+    };
+    window.addEventListener('hashchange', handleHash);
     return () => window.removeEventListener('hashchange', handleHash);
   }, []);
 
-  const playChannel = (idx: number) => {
+  const handlePlayChannel = async (idx: number) => {
     if (idx < 0 || idx >= channels.length) return;
+    if (playPromiseRef.current) {
+        try { await playPromiseRef.current; } catch(e) {}
+    }
     if (!isPowerOn) setIsPowerOn(true);
     setCurrentIdx(idx);
     const ch = channels[idx];
     if (videoRef.current && ch?.url) {
       setIsLoading(true);
       videoRef.current.src = ch.url;
-      videoRef.current.play().catch(() => {
-        handleChannelError(ch.id);
+      try {
+        playPromiseRef.current = videoRef.current.play();
+        await playPromiseRef.current;
+      } catch (err) {
+        console.warn("Playback Interrupted", err);
+      } finally {
         setIsLoading(false);
-      });
+      }
     }
-  };
-
-  const handleChannelError = (id: string) => {
-    setDeadChannelIds(prev => {
-      const updated = new Set(prev);
-      updated.add(id);
-      return updated;
-    });
-    showToast("Signal Lost - Tuning...");
-    setTimeout(() => changeCh(1), 800);
   };
 
   const changeCh = (dir: number) => {
     if (channels.length === 0) return;
     const nextIdx = (currentIdx + dir + channels.length) % channels.length;
-    playChannel(nextIdx);
+    handlePlayChannel(nextIdx);
   };
 
-  const togglePower = () => {
-    if (!isPowerOn) {
-      setIsPowerOn(true);
-      if (channels.length > 0) playChannel(0);
+  const handleNumberDial = (num: string) => {
+    const newBuffer = dialBuffer + num;
+    setDialBuffer(newBuffer);
+    showToast(`Tuning: ${newBuffer}`);
+    if (dialTimeoutRef.current) clearTimeout(dialTimeoutRef.current);
+    dialTimeoutRef.current = window.setTimeout(() => {
+      const targetIdx = parseInt(newBuffer) - 1;
+      if (!isNaN(targetIdx) && targetIdx >= 0 && targetIdx < channels.length) {
+        handlePlayChannel(targetIdx);
+      } else {
+        showToast("Invalid Channel");
+      }
+      setDialBuffer('');
+    }, 2000);
+  };
+
+  const handleLogin = () => {
+    if (loginUser === ADMIN_USERNAME && loginPass === ADMIN_PASSWORD) {
+      setRoute('admin-panel');
+      showToast("Access Granted");
     } else {
-      setIsPowerOn(false);
-      if (videoRef.current) { videoRef.current.pause(); videoRef.current.src = ""; }
-      setCurrentIdx(-1);
+      showToast("Invalid Credentials");
     }
   };
 
@@ -237,220 +232,183 @@ const App = () => {
     return channels.filter(c => !deadChannelIds.has(c.id) && (cat === 'All' || (c.category || 'General') === cat));
   }, [channels, currentCatIdx, categories, deadChannelIds]);
 
-  // --- Gemini Assistant ---
-  const startAssistant = async () => {
-    if (!('webkitSpeechRecognition' in window)) return showToast("Mic Not Supported");
-    const recognition = new (window as any).webkitSpeechRecognition();
-    recognition.lang = 'en-US';
-    recognition.onstart = () => setIsListening(true);
-    recognition.onend = () => setIsListening(false);
-    recognition.onresult = async (event: any) => {
-      const transcript = event.results[0][0].transcript;
-      setAssistantText(`Tuning: "${transcript}"`);
-      try {
-        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-        const response = await ai.models.generateContent({
-          model: 'gemini-3-flash-preview',
-          contents: `Command: "${transcript}". Channels: ${channels.map(c => c.name).slice(0, 100).join(', ')}. Return EXACT name or "None".`,
-        });
-        const matched = response.text?.trim();
-        if (matched && matched !== 'None') {
-          const fIdx = channels.findIndex(c => c.name.toLowerCase().includes(matched.toLowerCase()));
-          if (fIdx !== -1) playChannel(fIdx);
-        } else showToast("No Match Found");
-      } catch (e) { showToast("AI Offline"); }
-    };
-    recognition.start();
-  };
-
-  if (isAdmin) {
+  // --- Views ---
+  if (route === 'admin-login') {
     return (
-      <div className="min-h-screen bg-dark text-white p-6 font-sans">
+      <div className="min-h-screen bg-dark flex items-center justify-center p-4 font-sans">
+        <div className="w-full max-w-sm bg-header p-8 sm:p-12 rounded-[40px] border border-white/5 shadow-2xl space-y-8">
+          <div className="text-center">
+            <h2 className="text-3xl font-black text-rose-500 uppercase tracking-tight italic">ADMIN</h2>
+            <p className="text-[9px] text-gray-600 font-bold tracking-[0.3em] uppercase mt-1">SECURE ACCESS ONLY</p>
+          </div>
+          <div className="space-y-4">
+            <input type="text" placeholder="USERNAME" className="w-full bg-black border border-white/10 p-4 rounded-2xl text-white outline-none focus:border-rose-500 text-xs tracking-widest" value={loginUser} onChange={e => setLoginUser(e.target.value)} />
+            <input type="password" placeholder="PASSWORD" className="w-full bg-black border border-white/10 p-4 rounded-2xl text-white outline-none focus:border-rose-500 text-xs tracking-widest" value={loginPass} onChange={e => setLoginPass(e.target.value)} />
+            <button onClick={handleLogin} className="w-full bg-rose-500 py-4 rounded-2xl font-black text-xs tracking-widest uppercase active:scale-95 transition-transform">LOGIN</button>
+            <button onClick={() => { window.location.hash = ''; setRoute('player'); }} className="w-full text-gray-600 font-bold text-[10px] uppercase">CANCEL</button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (route === 'admin-panel') {
+    return (
+      <div className="min-h-screen bg-dark text-white p-4 sm:p-10 font-sans overflow-y-auto">
         <div className="max-w-4xl mx-auto space-y-8">
-          <header className="flex justify-between items-center border-b border-white/5 pb-6">
-            <h1 className="text-3xl font-black text-toffee italic tracking-tighter uppercase">ROOT ADMIN</h1>
-            <button onClick={() => window.location.hash = ''} className="bg-toffee px-8 py-2 rounded-full font-black uppercase text-xs tracking-widest shadow-lg shadow-toffee/20">Return Home</button>
+          <header className="flex flex-col sm:flex-row justify-between items-center gap-4 border-b border-white/10 pb-6">
+            <h1 className="text-2xl font-black text-rose-500 uppercase italic">COMMAND CENTER</h1>
+            <button onClick={() => { window.location.hash = ''; setRoute('player'); }} className="bg-white text-black px-8 py-2 rounded-full font-black text-[10px] tracking-widest">LOGOUT</button>
           </header>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-            <div className="bg-header p-8 rounded-[40px] border border-white/5 space-y-6 shadow-2xl">
-              <h2 className="text-xl font-bold flex items-center gap-3"><i className="fa-solid fa-file-import text-toffee"></i> Master Sync</h2>
-              <p className="text-[10px] text-gray-500 font-bold uppercase tracking-widest leading-relaxed">Overwrite your channel ecosystem by uploading a <code className="text-toffee">.mu3</code> or <code className="text-m3u">.m3u</code> file.</p>
-              <input type="file" ref={fileInputRef} onChange={handleFileUpload} className="hidden" accept=".m3u,.m3u8,.mu3" />
-              <button onClick={() => fileInputRef.current?.click()} className="w-full bg-white/5 hover:bg-white/10 border border-white/10 p-8 rounded-3xl flex flex-col items-center gap-4 transition-all">
-                <i className="fa-solid fa-cloud-arrow-up text-toffee text-3xl"></i>
-                <span className="font-black text-xs tracking-[0.3em]">BROWSE LOCAL DRIVE</span>
-              </button>
-              <div className="flex justify-between items-center bg-black/50 p-4 rounded-xl border border-white/5">
-                <span className="text-[9px] font-black text-gray-500 uppercase tracking-widest">Active Channels</span>
-                <span className="text-toffee font-black">{channels.length}</span>
+          
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="bg-header p-6 sm:p-8 rounded-[40px] border border-white/5 space-y-6">
+              <h2 className="text-sm font-black text-rose-500 uppercase tracking-widest">M3U8 DATA</h2>
+              <div className="space-y-4">
+                 <input type="text" placeholder="FEED URL (HTTPS)" className="w-full bg-black border border-white/10 p-4 rounded-xl text-xs outline-none focus:border-rose-500" value={m3uUrl} onChange={e => setM3uUrl(e.target.value)} />
+                 <button onClick={() => loadFromUrl(m3uUrl)} className="w-full bg-white text-black py-3 rounded-xl font-black text-[10px] uppercase">LOAD FROM URL</button>
               </div>
-              <button onClick={() => { localStorage.removeItem('ultra_iptv_channels'); setDemoChannels(); showToast("Reset to Demos"); }} className="w-full text-[9px] text-gray-600 font-black uppercase tracking-widest hover:text-red-500 py-2">Purge Local Cache</button>
+              <div className="relative">
+                <textarea value={manualM3U} onChange={e => setManualM3U(e.target.value)} className="w-full h-40 bg-black border border-white/10 rounded-2xl p-4 text-[10px] font-mono text-gray-500 outline-none focus:border-rose-500" placeholder="PASTE M3U RAW TEXT..." />
+              </div>
+              <button onClick={() => { if(parseM3U(manualM3U)) setManualM3U(''); }} className="w-full bg-rose-500 py-4 rounded-xl font-black text-[10px] tracking-widest uppercase">SYNC RAW TEXT</button>
             </div>
-            <div className="bg-header p-8 rounded-[40px] border border-white/5 space-y-6 shadow-2xl">
-              <h2 className="text-xl font-bold flex items-center gap-3"><i className="fa-solid fa-stamp text-toffee"></i> Brand Overlay</h2>
-              <div className="space-y-6">
-                <div className="space-y-2">
-                  <label className="text-[10px] font-black uppercase text-gray-500 tracking-widest">Logo Endpoint</label>
-                  <input type="text" value={watermark.url} onChange={e => setWatermark({...watermark, url: e.target.value})} className="w-full bg-black border border-white/5 p-4 rounded-2xl outline-none" placeholder="https://..." />
-                </div>
-                <div className="space-y-2">
-                  <label className="text-[10px] font-black uppercase text-gray-500 tracking-widest">Opacity Control</label>
-                  <input type="range" min="0" max="1" step="0.1" value={watermark.opacity} onChange={e => setWatermark({...watermark, opacity: parseFloat(e.target.value)})} className="w-full accent-toffee" />
+
+            <div className="bg-header p-6 sm:p-8 rounded-[40px] border border-white/5 space-y-6">
+              <h2 className="text-sm font-black text-rose-500 uppercase tracking-widest">BRANDING</h2>
+              <div className="space-y-4">
+                <input type="text" value={watermark.url} onChange={e => setWatermark({...watermark, url: e.target.value})} className="w-full bg-black border border-white/10 p-4 rounded-xl outline-none text-xs focus:border-rose-500" placeholder="WATERMARK IMAGE URL" />
+                <div className="flex items-center gap-4">
+                  <span className="text-[9px] font-bold text-gray-600 uppercase">OPACITY</span>
+                  <input type="range" min="0" max="1" step="0.1" value={watermark.opacity} onChange={e => setWatermark({...watermark, opacity: parseFloat(e.target.value)})} className="flex-1 accent-rose-500 h-1" />
                 </div>
               </div>
+              <button onClick={() => { localStorage.setItem('ultra_iptv_watermark', JSON.stringify(watermark)); showToast("Settings Saved"); }} className="w-full bg-white text-black py-4 rounded-xl font-black text-[10px] tracking-widest uppercase">SAVE OVERLAY</button>
             </div>
           </div>
-          <button onClick={() => { localStorage.setItem('ultra_iptv_watermark', JSON.stringify(watermark)); showToast("Profile Updated"); }} className="w-full bg-toffee py-6 rounded-3xl font-black text-xl shadow-2xl active:scale-[0.98] transition-all">COMMIT CHANGES</button>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="flex flex-col min-h-screen bg-dark text-white select-none font-sans overflow-x-hidden">
-      <header className="flex justify-between items-center px-6 py-4 bg-header border-b border-white/5 sticky top-0 z-[100] backdrop-blur-xl bg-opacity-90">
-        <div className="text-2xl font-black text-toffee italic tracking-tighter uppercase flex items-center gap-2">TOFFEE <span className="text-[10px] font-bold tracking-[0.2em] bg-toffee text-white px-2 py-0.5 rounded italic">ULTRA</span></div>
-        <div className="flex gap-6 text-xl items-center">
-          <i className={`fa-solid fa-microphone ${isListening ? 'text-toffee animate-pulse scale-125' : 'text-gray-400'} cursor-pointer`} onClick={startAssistant}></i>
-          <i className="fa-solid fa-magnifying-glass text-gray-400 hover:text-white cursor-pointer" onClick={() => setActiveModal('search')}></i>
-          <i className="fa-solid fa-gear text-gray-400 hover:text-white cursor-pointer" onClick={() => window.location.hash = '#admin'}></i>
-        </div>
+    <div className="flex flex-col min-h-screen bg-dark text-white font-sans overflow-x-hidden">
+      <header className="h-[80px] flex items-center justify-center bg-header border-b border-white/5 sticky top-0 z-[100] backdrop-blur-xl">
+        {/* Branding Slot */}
       </header>
 
-      <div className={`video-box w-full bg-black relative flex items-center justify-center overflow-hidden transition-all duration-700 ${isLandscape ? 'full-rotate' : 'h-[240px]'}`}>
+      <div className={`video-box w-full bg-black relative flex items-center justify-center transition-all duration-700 ${isLandscape ? 'full-rotate' : 'h-[240px] sm:h-[400px] border-b border-white/5'}`}>
         {!isPowerOn ? (
-           <div className="absolute inset-0 bg-[#070007] flex flex-col items-center justify-center">
-              <div className="text-toffee font-black text-[10px] tracking-[0.6em] animate-pulse">NO SIGNAL / STANDBY</div>
-              <button onClick={togglePower} className="mt-6 text-[9px] font-black border border-toffee/30 px-6 py-2 rounded-full hover:bg-toffee hover:text-white transition-all">INITIALIZE RECEIVER</button>
+           <div className="absolute inset-0 bg-black flex flex-col items-center justify-center p-6 text-center">
+              <p className="text-rose-500 font-black text-[11px] tracking-[1em] animate-pulse">SYSTEM IDLE</p>
+              <button onClick={() => handlePlayChannel(currentIdx >= 0 ? currentIdx : 0)} className="mt-8 text-[9px] font-black border border-rose-500/30 text-rose-500 px-12 py-4 rounded-full hover:bg-rose-500 hover:text-white transition-all tracking-[0.3em]">START FEED</button>
            </div>
         ) : (
           <>
-            <video ref={videoRef} className="w-full h-full object-contain" onLoadStart={() => setIsLoading(true)} onCanPlay={() => setIsLoading(false)} onEnded={() => changeCh(1)} onError={() => currentIdx >= 0 && handleChannelError(channels[currentIdx].id)} playsInline />
-            <div className="absolute inset-0 pointer-events-none opacity-[0.03] bg-[linear-gradient(rgba(18,16,16,0)_50%,rgba(0,0,0,0.25)_50%),linear-gradient(90deg,rgba(255,0,0,0.06),rgba(0,255,0,0.02),rgba(0,0,255,0.06))] bg-[length:100%_2px,3px_100%]"></div>
-            {watermark.url && <img src={watermark.url} className="absolute pointer-events-none" style={{ opacity: watermark.opacity, top: `${watermark.top}%`, left: `${watermark.left}%`, height: '30px', objectFit: 'contain' }} />}
-            {isLoading && <div className="absolute inset-0 flex items-center justify-center bg-black/40"><div className="w-8 h-8 border-2 border-white/10 border-t-toffee rounded-full animate-spin"></div></div>}
+            <video ref={videoRef} className="w-full h-full object-contain" onLoadStart={() => setIsLoading(true)} onCanPlay={() => setIsLoading(false)} onEnded={() => changeCh(1)} onError={() => currentIdx >= 0 && setDeadChannelIds(p => new Set(p).add(channels[currentIdx].id))} playsInline />
+            {watermark.url && <img src={watermark.url} className="absolute pointer-events-none" style={{ opacity: watermark.opacity, top: `${watermark.top}%`, left: `${watermark.left}%`, height: '30px' }} />}
+            {isLoading && <div className="absolute inset-0 flex items-center justify-center bg-black/60 backdrop-blur-md"><div className="w-10 h-10 border-2 border-white/10 border-t-rose-500 rounded-full animate-spin"></div></div>}
           </>
         )}
       </div>
 
-      <div className="flex justify-between items-center px-6 py-4 bg-card border-b border-white/5 text-[10px] font-black tracking-widest">
-        <div className="truncate max-w-[70%] text-gray-400 uppercase flex items-center gap-3">
-          <div className={`w-2 h-2 rounded-full ${isPowerOn ? 'bg-green-500 animate-pulse' : 'bg-red-500'}`}></div>
-          {currentIdx >= 0 && isPowerOn ? channels[currentIdx].name : "RECEIVER READY"}
+      <div className="px-6 py-4 bg-card border-b border-white/5 flex justify-between items-center">
+        <div className="text-[10px] font-black tracking-widest text-gray-500 uppercase truncate pr-4">
+          {currentIdx >= 0 && isPowerOn ? channels[currentIdx].name : "STANDBY"}
         </div>
-        <div className="text-toffee px-3 py-1 rounded-full bg-toffee/5">4K NATIVE</div>
+        <div className="text-rose-500 text-[8px] font-bold uppercase tracking-widest bg-rose-500/10 px-3 py-1 rounded border border-rose-500/20">ULTRA HD</div>
       </div>
 
-      {channels.length === 0 ? (
-        <div className="flex-1 flex flex-col items-center justify-center p-10 text-center">
-           <i className="fa-solid fa-satellite-dish text-5xl text-gray-800 mb-6"></i>
-           <h3 className="text-xl font-black uppercase tracking-widest mb-2">Satellite Scan Failed</h3>
-           <p className="text-xs text-gray-500 font-bold mb-8">No local channel data detected on your network.</p>
-           <button onClick={() => window.location.hash = '#admin'} className="bg-toffee px-10 py-4 rounded-3xl font-black text-xs tracking-widest shadow-2xl shadow-toffee/20">UPLOAD TV.MU3 MANUALLY</button>
-        </div>
-      ) : (
-        <>
-          <div className="p-8 flex flex-col items-center gap-8 relative">
-            {isListening && <div className="absolute top-0 left-0 right-0 py-2 text-center text-toffee font-black text-[10px] animate-bounce tracking-widest bg-dark/80 backdrop-blur-md z-10">{assistantText}</div>}
-            <div className="w-full max-w-[340px] space-y-8">
-              <div className="flex justify-between px-2">
-                <button className={`btn-circle ${isPowerOn ? 'text-green-500' : 'text-red-500'}`} onClick={togglePower}><i className="fa-solid fa-power-off text-xl"></i></button>
-                <button className="btn-circle" onClick={() => location.reload()}><i className="fa-solid fa-house"></i></button>
-                <button className="btn-circle" onClick={() => { setIsMuted(!isMuted); if(videoRef.current) videoRef.current.muted = !isMuted; }}><i className={`fa-solid ${isMuted ? 'fa-volume-xmark' : 'fa-volume-high'}`}></i></button>
-              </div>
-              <div className="flex justify-center gap-8 items-center">
-                <button className="btn-circle w-[55px] h-[55px] border-none bg-header/60" onClick={() => setCurrentCatIdx((currentCatIdx - 1 + categories.length) % categories.length)}><i className="fa-solid fa-chevron-left"></i></button>
-                <button className="btn-circle scale-[1.3] border-toffee/40 text-toffee bg-dark shadow-2xl" onClick={() => videoRef.current?.paused ? videoRef.current.play() : videoRef.current?.pause()}><i className={`fa-solid ${videoRef.current?.paused ? 'fa-play pl-1' : 'fa-pause'}`}></i></button>
-                <button className="btn-circle w-[55px] h-[55px] border-none bg-header/60" onClick={() => setCurrentCatIdx((currentCatIdx + 1) % categories.length)}><i className="fa-solid fa-chevron-right"></i></button>
-              </div>
-              <div className="grid grid-cols-[70px_1fr_70px] gap-6 h-[180px]">
-                <div className="bg-header border border-white/5 rounded-full flex flex-col justify-between items-center py-6 shadow-2xl">
-                   <button className="text-white h-12 w-full" onClick={() => setVolume(v => Math.min(100, v+10))}><i className="fa-solid fa-plus"></i></button>
-                   <span className="text-[10px] font-black text-gray-600">VOL</span>
-                   <button className="text-white h-12 w-full" onClick={() => setVolume(v => Math.max(0, v-10))}><i className="fa-solid fa-minus"></i></button>
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <button className="btn-circle w-full h-full text-[10px] font-black text-gray-400" onClick={() => setActiveModal('list')}>LIST</button>
-                  <button className="btn-circle w-full h-full text-lg text-gray-400" onClick={() => setIsLandscape(!isLandscape)}><i className={`fa-solid ${isLandscape ? 'fa-compress text-toffee' : 'fa-expand'}`}></i></button>
-                  <button className="btn-circle w-full h-full text-lg text-gray-400" onClick={startAssistant}><i className="fa-solid fa-microphone"></i></button>
-                  <button className="btn-circle w-full h-full text-[10px] font-black text-gray-400" onClick={() => setActiveModal('guide')}>INFO</button>
-                </div>
-                <div className="bg-header border border-white/5 rounded-full flex flex-col justify-between items-center py-6 shadow-2xl">
-                   <button className="text-white h-12 w-full" onClick={() => changeCh(1)}><i className="fa-solid fa-chevron-up"></i></button>
-                   <span className="text-[10px] font-black text-gray-600">CH</span>
-                   <button className="text-white h-12 w-full" onClick={() => changeCh(-1)}><i className="fa-solid fa-chevron-down"></i></button>
-                </div>
-              </div>
-              <div className="text-center text-[10px] font-black text-toffee tracking-[0.4em] uppercase opacity-70">{categories[currentCatIdx] || 'Global'}</div>
-            </div>
-          </div>
-          <section className="px-6 pb-24">
-            <div className="flex items-center gap-3 mb-8"><div className="h-4 w-1 bg-toffee rounded-full"></div><div className="text-[10px] font-black uppercase tracking-[0.3em] text-gray-500">Available Feed</div></div>
-            <div className="grid grid-cols-4 gap-6">
-              {filteredChannels.map(ch => {
-                const realIdx = channels.indexOf(ch);
-                const isActive = realIdx === currentIdx;
-                return (
-                  <div key={ch.id} className="flex flex-col items-center gap-2 cursor-pointer group" onClick={() => playChannel(realIdx)}>
-                    <div className={`w-[70px] h-[70px] bg-white rounded-3xl flex items-center justify-center overflow-hidden border-2 transition-all duration-300 ${isActive ? 'border-toffee shadow-2xl scale-110' : 'border-transparent opacity-60 group-hover:opacity-100'}`}>
-                      <img src={ch.logo || `https://via.placeholder.com/100?text=${ch.name[0]}`} className="w-[80%] h-[80%] object-contain" alt={ch.name} />
-                    </div>
-                    <span className={`text-[8px] font-black text-center uppercase tracking-tighter line-clamp-1 w-full ${isActive ? 'text-toffee' : 'text-gray-600'}`}>{ch.name}</span>
-                  </div>
-                );
-              })}
-            </div>
-          </section>
-        </>
-      )}
+      <div className="p-6 flex flex-col items-center transition-all duration-700" style={{ maxHeight: isRemoteMinimized ? '60px' : '1000px', overflow: 'hidden' }}>
+        <button onClick={() => setIsRemoteMinimized(!isRemoteMinimized)} className="text-[8px] font-black text-gray-700 tracking-widest uppercase mb-4">{isRemoteMinimized ? 'Expand Remote' : 'Minimize Remote'}</button>
+        
+        {!isRemoteMinimized && (
+          <div className="w-full max-w-[360px] space-y-8 animate-in slide-in-from-top">
+             <div className="flex justify-between items-center">
+                <button className={`btn-circle ${isPowerOn ? 'text-green-500' : 'text-red-500'}`} onClick={() => setIsPowerOn(!isPowerOn)}><i className="fa-solid fa-power-off text-xl"></i></button>
+                <button className="btn-circle text-gray-500" onClick={() => setIsMuted(!isMuted)}><i className={`fa-solid ${isMuted ? 'fa-volume-xmark' : 'fa-volume-high'} text-lg`}></i></button>
+                <button className="btn-circle text-gray-500" onClick={() => setActiveModal('list')}><i className="fa-solid fa-list-ul text-lg"></i></button>
+             </div>
 
-      {activeModal && (
-        <div className="fixed inset-0 z-[5000] flex items-center justify-center p-6 backdrop-blur-sm">
-          <div className="absolute inset-0 bg-black/90" onClick={() => setActiveModal(null)}></div>
-          <div className="relative bg-header border border-white/5 rounded-[40px] w-full max-w-[340px] p-10 shadow-2xl">
-             {activeModal === 'search' && (
-               <>
-                 <h3 className="text-xs font-black text-toffee mb-8 text-center uppercase tracking-[0.4em]">CHANNEL INDEX</h3>
-                 <input type="text" className="w-full bg-black border border-white/5 p-5 text-center rounded-2xl text-white font-black text-lg outline-none mb-6 focus:border-toffee" placeholder="NAME" autoFocus onChange={(e) => {
-                     const q = e.target.value.toLowerCase();
-                     if(q.length > 2) {
-                       const f = channels.findIndex(c => c.name.toLowerCase().includes(q));
-                       if(f !== -1) { playChannel(f); showToast(`Tuned: ${channels[f].name}`); }
-                     }
-                   }} />
-                 <button className="w-full h-14 bg-toffee text-white font-black rounded-2xl text-xs uppercase" onClick={() => setActiveModal(null)}>DISMISS</button>
-               </>
-             )}
-             {activeModal === 'list' && (
-               <>
-                 <h3 className="text-xs font-black text-toffee mb-8 text-center uppercase tracking-[0.4em]">QUICK SELECT</h3>
-                 <div className="grid grid-cols-3 gap-4 max-h-[300px] overflow-y-auto custom-scrollbar pr-1">
-                    {channels.slice(0, 50).map((ch, idx) => (
-                       <div key={idx} className="aspect-square bg-white rounded-2xl p-2 flex items-center justify-center cursor-pointer active:scale-90" onClick={() => { playChannel(idx); setActiveModal(null); }}>
-                          <img src={ch.logo || `https://via.placeholder.com/50`} className="w-[80%] h-[80%] object-contain" alt="ch" />
-                       </div>
-                    ))}
-                 </div>
-               </>
-             )}
+             <div className="grid grid-cols-3 gap-3">
+                {[1,2,3,4,5,6,7,8,9].map(n => (
+                  <button key={n} onClick={() => handleNumberDial(n.toString())} className="btn-circle w-full h-12 text-lg font-black text-gray-500 bg-header/60">{n}</button>
+                ))}
+                <button className="btn-circle w-full h-12 text-lg text-gray-600 bg-header/60" onClick={() => setIsLandscape(!isLandscape)}><i className="fa-solid fa-expand"></i></button>
+                <button onClick={() => handleNumberDial('0')} className="btn-circle w-full h-12 text-lg font-black text-gray-500 bg-header/60">0</button>
+                <button className="btn-circle w-full h-12 text-gray-600 bg-header/60" onClick={() => loadData(true)}><i className="fa-solid fa-rotate"></i></button>
+             </div>
+
+             <div className="grid grid-cols-[80px_1fr_80px] gap-4 h-[160px]">
+                <div className="bg-header border border-white/5 rounded-3xl flex flex-col justify-between items-center py-6">
+                   <button className="text-white active:text-rose-500" onClick={() => setVolume(v => Math.min(100, v+10))}><i className="fa-solid fa-plus"></i></button>
+                   <span className="text-[8px] font-black text-gray-800 uppercase">VOL</span>
+                   <button className="text-white active:text-rose-500" onClick={() => setVolume(v => Math.max(0, v-10))}><i className="fa-solid fa-minus"></i></button>
+                </div>
+                <div className="flex items-center justify-center">
+                   <button className="btn-circle scale-125 border-rose-500/30 text-rose-500" onClick={() => videoRef.current?.paused ? videoRef.current.play() : videoRef.current?.pause()}><i className={`fa-solid ${videoRef.current?.paused ? 'fa-play pl-1' : 'fa-pause'} text-xl`}></i></button>
+                </div>
+                <div className="bg-header border border-white/5 rounded-3xl flex flex-col justify-between items-center py-6">
+                   <button className="text-white active:text-rose-500" onClick={() => changeCh(1)}><i className="fa-solid fa-chevron-up"></i></button>
+                   <span className="text-[8px] font-black text-gray-800 uppercase">CH</span>
+                   <button className="text-white active:text-rose-500" onClick={() => changeCh(-1)}><i className="fa-solid fa-chevron-down"></i></button>
+                </div>
+             </div>
+          </div>
+        )}
+      </div>
+
+      <div className="px-6 mb-8">
+        <div className="flex gap-3 overflow-x-auto no-scrollbar pb-2">
+            {categories.map((cat, idx) => (
+                <button key={cat} onClick={() => setCurrentCatIdx(idx)} className={`whitespace-nowrap px-6 py-2 rounded-full text-[9px] font-black uppercase tracking-widest transition-all ${currentCatIdx === idx ? 'bg-rose-500 text-white' : 'bg-header text-gray-600 border border-white/5'}`}>{cat}</button>
+            ))}
+        </div>
+      </div>
+
+      <section className="px-6 pb-32">
+        <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8 gap-y-10 gap-x-4">
+          {filteredChannels.map(ch => {
+            const realIdx = channels.indexOf(ch);
+            const isActive = realIdx === currentIdx;
+            return (
+              <div key={ch.id} className="flex flex-col items-center gap-3 cursor-pointer group" onClick={() => handlePlayChannel(realIdx)}>
+                <div className={`w-[70px] h-[70px] rounded-full flex items-center justify-center overflow-hidden border-2 transition-all duration-500 bg-white p-2 ${isActive ? 'border-rose-500 scale-110 shadow-lg shadow-rose-500/20' : 'border-transparent opacity-40'}`}>
+                  <img src={ch.logo || `https://via.placeholder.com/100?text=${ch.name[0]}`} className="w-full h-full object-contain" alt={ch.name} onError={e => e.currentTarget.src=`https://via.placeholder.com/100?text=${ch.name[0]}`} />
+                </div>
+                <span className={`text-[8px] font-bold text-center uppercase tracking-tight line-clamp-2 w-full leading-tight ${isActive ? 'text-rose-500' : 'text-gray-600'}`}>{ch.name}</span>
+              </div>
+            );
+          })}
+        </div>
+      </section>
+
+      {activeModal === 'list' && (
+        <div className="fixed inset-0 z-[1000] flex items-center justify-center p-6 backdrop-blur-xl bg-black/80">
+          <div className="bg-header border border-white/10 rounded-[40px] w-full max-w-sm p-8 space-y-6">
+             <h3 className="text-center font-black text-rose-500 uppercase tracking-widest text-xs">STATION INDEX</h3>
+             <div className="grid grid-cols-4 gap-4 max-h-[300px] overflow-y-auto no-scrollbar">
+                {channels.map((ch, idx) => (
+                   <div key={idx} onClick={() => { handlePlayChannel(idx); setActiveModal(null); }} className={`aspect-square bg-white rounded-full p-2 border-2 ${currentIdx === idx ? 'border-rose-500' : 'border-transparent opacity-60'}`}>
+                      <img src={ch.logo || `https://via.placeholder.com/100`} className="w-full h-full object-contain" />
+                   </div>
+                ))}
+             </div>
+             <button onClick={() => setActiveModal(null)} className="w-full py-4 bg-white/5 rounded-2xl text-[10px] font-black uppercase">CLOSE</button>
           </div>
         </div>
       )}
 
-      <div className={`fixed bottom-10 left-1/2 -translate-x-1/2 bg-black/95 text-white border border-white/10 px-8 py-4 rounded-3xl text-[9px] font-black shadow-2xl transition-all duration-500 z-[10000] uppercase tracking-widest ${toast.show ? 'translate-y-0 opacity-100 scale-100' : 'translate-y-20 opacity-0 scale-50'}`}>{toast.msg}</div>
+      <div className={`fixed bottom-10 left-1/2 -translate-x-1/2 bg-white text-black px-10 py-4 rounded-full text-[10px] font-black shadow-2xl transition-all duration-500 z-[10000] uppercase tracking-widest flex items-center gap-4 ${toast.show ? 'translate-y-0 opacity-100' : 'translate-y-40 opacity-0'}`}>
+        <div className="w-2 h-2 bg-rose-500 rounded-full animate-ping"></div>
+        {toast.msg}
+      </div>
     </div>
   );
 };
 
 const startApp = () => {
   const container = document.getElementById('app-root');
-  if (!container) return;
-  const root = createRoot(container);
-  root.render(<App />);
+  if (container) createRoot(container).render(<App />);
 };
-
-if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', startApp);
-} else {
-  startApp();
-}
+document.readyState === 'loading' ? document.addEventListener('DOMContentLoaded', startApp) : startApp();
