@@ -12,18 +12,17 @@
                 extend: {
                     colors: {
                         toffee: '#ff0055',
-                        dark: '#0b010b',
-                        header: '#1a021a',
-                        card: '#120112',
-                        btn: '#1a021a',
-                        border: '#222222',
+                        dark: '#070007',
+                        header: '#130113',
+                        card: '#0f010f',
+                        border: '#1f021f',
                     }
                 }
             }
         }
     </script>
     <style>
-        body { background-color: #0b010b; color: white; overflow-x: hidden; font-family: 'Segoe UI', system-ui, sans-serif; }
+        body { background-color: #070007; color: white; overflow-x: hidden; font-family: 'Inter', system-ui, -apple-system, sans-serif; }
         .full-rotate {
             position: fixed !important;
             top: 0; left: 0;
@@ -35,23 +34,24 @@
             background: #000;
         }
         .btn-circle {
-            width: 55px; height: 55px;
+            width: 58px; height: 58px;
             border-radius: 9999px;
             display: flex; align-items: center; justify-content: center;
-            background: #1a021a;
-            border: 1px solid #333;
-            transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+            background: #130113;
+            border: 1px solid #1f021f;
+            transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
             outline: none;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.5);
         }
         .btn-circle:active {
             background: #ff0055;
             border-color: #ff0055;
             color: white;
-            transform: scale(0.9);
-            box-shadow: 0 0 20px rgba(255, 0, 85, 0.4);
+            transform: scale(0.9) translateY(2px);
+            box-shadow: 0 0 25px rgba(255, 0, 85, 0.5);
         }
-        ::-webkit-scrollbar { width: 4px; }
-        ::-webkit-scrollbar-thumb { background: #ff0055; border-radius: 10px; }
+        .custom-scrollbar::-webkit-scrollbar { width: 3px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #ff0055; border-radius: 10px; }
     </style>
 <script type="importmap">
 {
