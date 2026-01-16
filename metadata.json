@@ -1,7 +1,0 @@
-{
-  "name": "Toffee Ultra Pro Clone",
-  "description": "Premium IPTV player with Gemini-powered Voice Assistant.",
-  "requestFramePermissions": [
-    "microphone"
-  ]
-}
