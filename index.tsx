@@ -15,6 +15,7 @@ interface WatermarkSettings {
   top: number;
   left: number;
   url: string;
+  visible: boolean;
 }
 
 interface DevSettings {
@@ -23,9 +24,10 @@ interface DevSettings {
   note: string;
 }
 
+// --- App Component ---
 const App = () => {
-  // Routing simulation
-  const [isAdmin, setIsAdmin] = useState(window.location.hash === '#admin');
+  // Routing simulation via Hash
+  const [view, setView] = useState<'player' | 'admin'>(window.location.hash === '#admin' ? 'admin' : 'player');
 
   // Channel State
   const [channels, setChannels] = useState<Channel[]>([]);
@@ -40,17 +42,17 @@ const App = () => {
   const [isPowerOn, setIsPowerOn] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [isRemoteHidden, setIsRemoteHidden] = useState(false);
-  const [isLandscapeMode, setIsLandscapeMode] = useState(false);
+  const [isFullScreen, setIsFullScreen] = useState(false);
   const [toast, setToast] = useState<{ msg: string; show: boolean }>({ msg: '', show: false });
 
   // Admin Configurable Settings (Persisted in LocalStorage)
   const [watermark, setWatermark] = useState<WatermarkSettings>(() => {
-    const saved = localStorage.getItem('toffee_watermark');
-    return saved ? JSON.parse(saved) : { opacity: 0.6, top: 10, left: 10, url: 'assets/logo.png' };
+    const saved = localStorage.getItem('toffee_watermark_v2');
+    return saved ? JSON.parse(saved) : { opacity: 0.6, top: 10, left: 10, url: 'assets/logo.png', visible: true };
   });
 
   const [devSettings, setDevSettings] = useState<DevSettings>(() => {
-    const saved = localStorage.getItem('toffee_dev');
+    const saved = localStorage.getItem('toffee_dev_v2');
     return saved ? JSON.parse(saved) : { photo: 'assets/dev.png', name: 'Mujahid', note: "Dhaka Polytechnic student. I build highly responsive and aesthetic UI experiences." };
   });
 
@@ -58,65 +60,59 @@ const App = () => {
   const [manualChInput, setManualChInput] = useState("");
   const videoRef = useRef<HTMLVideoElement>(null);
 
-  // Auto-load tv.m3u or tv.mu3 on startup
+  // Sync state with hash for admin routing
   useEffect(() => {
-    const loadM3U = async () => {
-      console.log("Attempting to load M3U file...");
-      try {
-        // We try standard names.mu3 was specifically mentioned by user.
-        const filesToTry = ['tv.mu3', 'tv.m3u', '/tv.mu3', '/tv.m3u'];
-        let text = "";
-        let success = false;
-
-        for (const file of filesToTry) {
-          try {
-            const response = await fetch(file);
-            if (response.ok) {
-              text = await response.text();
-              console.log(`Successfully fetched ${file}`);
-              success = true;
-              break;
-            }
-          } catch (e) {
-            continue;
-          }
-        }
-        
-        if (success && text.trim().length > 0) {
-          parseM3U(text);
-          showToast("Playlist loaded from root");
-        } else {
-          // Fallback to localStorage if no file found
-          const savedData = localStorage.getItem('toffee_iptv_data');
-          if (savedData) {
-            const parsed = JSON.parse(savedData);
-            setChannels(parsed);
-            updateCategoryList(parsed);
-          } else {
-            // Default demo data
-            const demo = [
-              { id: '1', name: 'Somoy TV', url: 'https://cdn-1.toffeelive.com/somoy/index.m3u8', category: 'News', logo: 'https://seeklogo.com/images/S/somoy-tv-logo-87B757523F-seeklogo.com.png' },
-              { id: '2', name: 'T Sports', url: 'https://cdn-1.toffeelive.com/tsports/index.m3u8', category: 'Sports', logo: 'https://tsports.com/static/media/tsports-logo.8e7b99c2.png' }
-            ];
-            setChannels(demo);
-            updateCategoryList(demo);
-          }
-        }
-      } catch (err) {
-        console.error("Error in loading process:", err);
-      }
+    const handleHashChange = () => {
+      setView(window.location.hash === '#admin' ? 'admin' : 'player');
     };
-    
-    loadM3U();
-
-    // Listen for hash changes to toggle admin
-    const handleHashChange = () => setIsAdmin(window.location.hash === '#admin');
     window.addEventListener('hashchange', handleHashChange);
     return () => window.removeEventListener('hashchange', handleHashChange);
   }, []);
 
+  // Optimized tv.mu3 / tv.m3u Loader for Vercel
+  useEffect(() => {
+    const loadM3U = async () => {
+      // Use cache busting to force Vercel to serve the latest file
+      const bust = `?v=${Date.now()}`;
+      const paths = ['tv.mu3', 'tv.m3u', '/tv.mu3', '/tv.m3u', './tv.mu3'];
+      
+      let data = "";
+      for (const path of paths) {
+        try {
+          const res = await fetch(path + bust);
+          if (res.ok) {
+            data = await res.text();
+            if (data.trim().startsWith('#EXTM3U')) break;
+          }
+        } catch (e) {
+          console.warn(`Failed to fetch ${path}`);
+        }
+      }
+
+      if (data) {
+        parseM3U(data);
+        showToast("Playlist Synced from Server");
+      } else {
+        // Fallback to local storage or demo
+        const saved = localStorage.getItem('toffee_iptv_data');
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          setChannels(parsed);
+          updateCategories(parsed);
+        } else {
+          const demo = [
+            { id: '1', name: 'Somoy TV', url: 'https://cdn-1.toffeelive.com/somoy/index.m3u8', category: 'News', logo: 'https://seeklogo.com/images/S/somoy-tv-logo-87B757523F-seeklogo.com.png' },
+            { id: '2', name: 'T Sports', url: 'https://cdn-1.toffeelive.com/tsports/index.m3u8', category: 'Sports', logo: 'https://tsports.com/static/media/tsports-logo.8e7b99c2.png' }
+          ];
+          setChannels(demo);
+          updateCategories(demo);
+        }
+      }
+    };
+    loadM3U();
+  }, []);
+
   const parseM3U = (data: string) => {
-    // Handle both \n and \r\n line endings
     const lines = data.split(/\r?\n/);
     const newChannels: Channel[] = [];
     let current: Partial<Channel> | null = null;
@@ -140,12 +136,12 @@ const App = () => {
 
     if (newChannels.length > 0) {
       setChannels(newChannels);
-      updateCategoryList(newChannels);
+      updateCategories(newChannels);
       localStorage.setItem('toffee_iptv_data', JSON.stringify(newChannels));
     }
   };
 
-  const updateCategoryList = (list: Channel[]) => {
+  const updateCategories = (list: Channel[]) => {
     const cats = Array.from(new Set(['All', ...list.map(c => c.category || 'General')]));
     setCategories(cats);
   };
@@ -158,11 +154,11 @@ const App = () => {
   const togglePower = () => {
     if (!isPowerOn) {
       setIsPowerOn(true);
-      showToast("System Starting...");
+      showToast("System Booting...");
       if (channels.length > 0) playChannel(0);
     } else {
       setIsPowerOn(false);
-      showToast("Powering Off");
+      showToast("Shutting Down");
       if (videoRef.current) {
         videoRef.current.pause();
         videoRef.current.src = "";
@@ -179,19 +175,19 @@ const App = () => {
       setIsLoading(true);
       videoRef.current.src = ch.url;
       videoRef.current.play().catch(() => {
-        handleChannelError(ch.id);
+        handleError(ch.id);
         setIsLoading(false);
       });
     }
   };
 
-  const handleChannelError = (id: string) => {
+  const handleError = (id: string) => {
     setErrorIds(prev => {
-      const updated = new Set(prev);
-      updated.add(id);
-      return updated;
+      const next = new Set(prev);
+      next.add(id);
+      return next;
     });
-    showToast("Load Failed - Hiding Channel");
+    showToast("Load Failed - Channel Hidden");
   };
 
   const changeCh = (dir: number) => {
@@ -205,62 +201,86 @@ const App = () => {
     return channels.filter(c => !errorIds.has(c.id) && (cat === 'All' || (c.category || 'General') === cat));
   }, [channels, currentCatIdx, categories, errorIds]);
 
-  const saveAdminSettings = () => {
-    localStorage.setItem('toffee_watermark', JSON.stringify(watermark));
-    localStorage.setItem('toffee_dev', JSON.stringify(devSettings));
-    showToast("Settings Saved Successfully");
-  };
-
-  if (isAdmin) {
+  // Admin Section Render
+  if (view === 'admin') {
     return (
-      <div className="min-h-screen bg-dark p-6 font-sans text-white">
+      <div className="min-h-screen bg-dark text-white p-6 font-sans">
         <div className="max-w-4xl mx-auto space-y-8">
           <header className="flex justify-between items-center border-b border-border pb-4">
-            <h1 className="text-3xl font-black text-toffee">ADMIN DASHBOARD</h1>
-            <button onClick={() => { window.location.hash = ''; }} className="bg-toffee px-6 py-2 rounded-full font-bold">Exit Admin</button>
+            <h1 className="text-2xl font-black text-toffee tracking-tighter">ADMIN PANEL</h1>
+            <button 
+              onClick={() => { window.location.hash = ''; }}
+              className="bg-toffee px-6 py-2 rounded-full font-bold text-sm shadow-lg shadow-toffee/20"
+            >
+              Back to TV
+            </button>
           </header>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-            <div className="bg-header p-6 rounded-3xl border border-border space-y-4">
+            {/* Watermark Section */}
+            <div className="bg-header p-6 rounded-3xl border border-border space-y-6">
               <h2 className="text-xl font-bold flex items-center gap-2"><i className="fa-solid fa-stamp text-toffee"></i> Watermark Control</h2>
-              <div className="space-y-2">
-                <label className="text-xs text-gray-500 font-bold uppercase">Logo Image Path</label>
-                <input type="text" value={watermark.url} onChange={e => setWatermark({...watermark, url: e.target.value})} className="w-full bg-black border border-border p-3 rounded-xl outline-none" placeholder="assets/logo.png" />
-              </div>
-              <div className="space-y-2">
-                <label className="text-xs text-gray-500 font-bold uppercase">Opacity ({Math.round(watermark.opacity * 100)}%)</label>
-                <input type="range" min="0" max="1" step="0.1" value={watermark.opacity} onChange={e => setWatermark({...watermark, opacity: parseFloat(e.target.value)})} className="w-full accent-toffee" />
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <label className="text-xs text-gray-500 font-bold uppercase">Top (%)</label>
-                  <input type="range" min="0" max="100" value={watermark.top} onChange={e => setWatermark({...watermark, top: parseInt(e.target.value)})} className="w-full accent-toffee" />
+              <div className="space-y-4">
+                <div className="flex justify-between items-center">
+                  <label className="text-sm text-gray-400 font-bold">Visibility</label>
+                  <button 
+                    onClick={() => setWatermark({...watermark, visible: !watermark.visible})}
+                    className={`w-12 h-6 rounded-full transition-colors ${watermark.visible ? 'bg-toffee' : 'bg-gray-700'}`}
+                  >
+                    <div className={`w-4 h-4 bg-white rounded-full transition-transform ${watermark.visible ? 'translate-x-7' : 'translate-x-1'}`}></div>
+                  </button>
                 </div>
-                <div className="space-y-2">
-                  <label className="text-xs text-gray-500 font-bold uppercase">Left (%)</label>
-                  <input type="range" min="0" max="100" value={watermark.left} onChange={e => setWatermark({...watermark, left: parseInt(e.target.value)})} className="w-full accent-toffee" />
+                <div>
+                  <label className="block text-xs text-gray-500 font-bold mb-2 uppercase">Logo URL/Path</label>
+                  <input type="text" value={watermark.url} onChange={e => setWatermark({...watermark, url: e.target.value})} className="w-full bg-black border border-border p-3 rounded-xl outline-none text-sm" />
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-500 font-bold mb-2 uppercase">Opacity ({Math.round(watermark.opacity * 100)}%)</label>
+                  <input type="range" min="0" max="1" step="0.1" value={watermark.opacity} onChange={e => setWatermark({...watermark, opacity: parseFloat(e.target.value)})} className="w-full accent-toffee" />
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-xs text-gray-500 font-bold mb-2 uppercase">Top Pos (%)</label>
+                    <input type="range" min="0" max="100" value={watermark.top} onChange={e => setWatermark({...watermark, top: parseInt(e.target.value)})} className="w-full accent-toffee" />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-gray-500 font-bold mb-2 uppercase">Left Pos (%)</label>
+                    <input type="range" min="0" max="100" value={watermark.left} onChange={e => setWatermark({...watermark, left: parseInt(e.target.value)})} className="w-full accent-toffee" />
+                  </div>
                 </div>
               </div>
             </div>
 
-            <div className="bg-header p-6 rounded-3xl border border-border space-y-4">
-              <h2 className="text-xl font-bold flex items-center gap-2"><i className="fa-solid fa-user-tie text-toffee"></i> Developer Info</h2>
-              <div className="space-y-2">
-                <label className="text-xs text-gray-500 font-bold uppercase">Photo URL</label>
-                <input type="text" value={devSettings.photo} onChange={e => setDevSettings({...devSettings, photo: e.target.value})} className="w-full bg-black border border-border p-3 rounded-xl outline-none" placeholder="assets/dev.png" />
-              </div>
-              <div className="space-y-2">
-                <label className="text-xs text-gray-500 font-bold uppercase">Full Name</label>
-                <input type="text" value={devSettings.name} onChange={e => setDevSettings({...devSettings, name: e.target.value})} className="w-full bg-black border border-border p-3 rounded-xl outline-none" />
-              </div>
-              <div className="space-y-2">
-                <label className="text-xs text-gray-500 font-bold uppercase">Bio Note</label>
-                <textarea value={devSettings.note} onChange={e => setDevSettings({...devSettings, note: e.target.value})} className="w-full bg-black border border-border p-3 rounded-xl outline-none h-24 resize-none" />
+            {/* Developer Section */}
+            <div className="bg-header p-6 rounded-3xl border border-border space-y-6">
+              <h2 className="text-xl font-bold flex items-center gap-2"><i className="fa-solid fa-user-gear text-toffee"></i> Developer Info</h2>
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-xs text-gray-500 font-bold mb-2 uppercase">Photo Path (e.g. assets/dev.png)</label>
+                  <input type="text" value={devSettings.photo} onChange={e => setDevSettings({...devSettings, photo: e.target.value})} className="w-full bg-black border border-border p-3 rounded-xl outline-none text-sm" />
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-500 font-bold mb-2 uppercase">Dev Name</label>
+                  <input type="text" value={devSettings.name} onChange={e => setDevSettings({...devSettings, name: e.target.value})} className="w-full bg-black border border-border p-3 rounded-xl outline-none text-sm" />
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-500 font-bold mb-2 uppercase">Note / Bio</label>
+                  <textarea value={devSettings.note} onChange={e => setDevSettings({...devSettings, note: e.target.value})} className="w-full bg-black border border-border p-3 rounded-xl outline-none text-sm h-24 resize-none" />
+                </div>
               </div>
             </div>
           </div>
 
-          <button onClick={saveAdminSettings} className="w-full bg-toffee py-4 rounded-2xl font-black text-xl shadow-lg hover:brightness-110 active:scale-95 transition-all">SAVE SETTINGS</button>
+          <button 
+            onClick={() => {
+              localStorage.setItem('toffee_watermark_v2', JSON.stringify(watermark));
+              localStorage.setItem('toffee_dev_v2', JSON.stringify(devSettings));
+              showToast("Settings Saved Locally");
+            }}
+            className="w-full bg-toffee py-4 rounded-2xl font-black text-xl shadow-xl hover:brightness-110 active:scale-95 transition-all"
+          >
+            SAVE CHANGES
+          </button>
         </div>
       </div>
     );
@@ -273,24 +293,24 @@ const App = () => {
         <div className="text-2xl font-black text-toffee italic tracking-tighter uppercase">TOFFEE ULTRA</div>
         <div className="flex gap-5 text-xl">
           <i className="fa-solid fa-magnifying-glass hover:text-toffee cursor-pointer" onClick={() => setActiveModal('key')}></i>
-          <i className="fa-solid fa-gear hover:text-toffee cursor-pointer" onClick={() => window.location.hash = '#admin'}></i>
+          <i className="fa-solid fa-gear hover:text-toffee cursor-pointer" onClick={() => { window.location.hash = '#admin'; }}></i>
         </div>
       </header>
 
-      {/* Video Display */}
-      <div className={`video-box w-full bg-black relative flex items-center justify-center transition-all duration-300 ${isLandscapeMode ? 'full-rotate' : 'h-[220px]'}`}>
+      {/* Video Box */}
+      <div className={`video-box w-full bg-black relative flex items-center justify-center transition-all duration-300 ${isFullScreen ? 'full-rotate' : 'h-[220px]'}`}>
         <video 
           ref={videoRef} 
           className="w-full h-full object-contain"
           onLoadStart={() => setIsLoading(true)}
           onCanPlay={() => setIsLoading(false)}
           onEnded={() => changeCh(1)}
-          onError={() => { if(currentIdx >=0) handleChannelError(channels[currentIdx].id); }}
+          onError={() => { if(currentIdx >=0) handleError(channels[currentIdx].id); }}
           playsInline
         />
         
-        {/* Dynamic Watermark */}
-        {isPowerOn && watermark.url && (
+        {/* Admin Watermark */}
+        {isPowerOn && watermark.visible && watermark.url && (
           <img 
             src={watermark.url} 
             className="absolute pointer-events-none transition-all duration-500" 
@@ -298,7 +318,7 @@ const App = () => {
               opacity: watermark.opacity, 
               top: `${watermark.top}%`, 
               left: `${watermark.left}%`, 
-              height: '40px', 
+              height: '35px', 
               objectFit: 'contain' 
             }} 
             alt="watermark"
@@ -311,16 +331,16 @@ const App = () => {
         )}
       </div>
 
-      {/* Info Bar */}
+      {/* Status */}
       <div className="flex justify-between items-center px-6 py-4 bg-card border-b border-border text-sm">
-        <div className="font-bold truncate max-w-[75%] text-gray-100 flex items-center gap-2">
+        <div className="font-bold truncate max-w-[75%] text-gray-200 flex items-center gap-2">
           <div className={`w-2 h-2 rounded-full ${isPowerOn ? 'bg-green-500 animate-pulse' : 'bg-red-500'}`}></div>
-          {currentIdx >= 0 && isPowerOn ? channels[currentIdx].name : "System Offline"}
+          {currentIdx >= 0 && isPowerOn ? channels[currentIdx].name : "TV Offline"}
         </div>
-        <div className="text-toffee font-black text-[10px] tracking-widest uppercase bg-header px-2 py-1 rounded-md border border-border">ULTRA PRO</div>
+        <div className="text-toffee font-black text-[10px] tracking-widest uppercase bg-header px-2 py-1 rounded-md border border-border">LIVE PRO</div>
       </div>
 
-      {/* Remote Controls */}
+      {/* Controller */}
       <div className="p-6 flex flex-col items-center gap-6">
         <div className={`remote-ui w-full max-w-[340px] space-y-6 ${isRemoteHidden ? 'hidden h-0 opacity-0' : 'block opacity-100 transition-all duration-500'}`}>
           <div className="flex justify-between">
@@ -357,34 +377,32 @@ const App = () => {
 
           <div className="grid grid-cols-[65px_1fr_65px] gap-4 h-[160px]">
             <div className="bg-header border border-border rounded-full flex flex-col justify-between items-center py-5 shadow-2xl">
-               <button className="text-white h-12 w-full active:text-toffee" onClick={() => { setVolume(v => Math.min(100, v+10)); showToast(`Vol: ${volume}%`); }}><i className="fa-solid fa-plus text-lg"></i></button>
-               <span className="text-[10px] font-black text-gray-600 uppercase tracking-tighter">VOL</span>
-               <button className="text-white h-12 w-full active:text-toffee" onClick={() => { setVolume(v => Math.max(0, v-10)); showToast(`Vol: ${volume}%`); }}><i className="fa-solid fa-minus text-lg"></i></button>
+               <button className="text-white h-12 w-full active:text-toffee" onClick={() => { setVolume(v => Math.min(100, v+10)); showToast(`Vol: ${volume}%`); }}><i className="fa-solid fa-plus"></i></button>
+               <span className="text-[10px] font-black text-gray-600 uppercase">VOL</span>
+               <button className="text-white h-12 w-full active:text-toffee" onClick={() => { setVolume(v => Math.max(0, v-10)); showToast(`Vol: ${volume}%`); }}><i className="fa-solid fa-minus"></i></button>
             </div>
             
             <div className="grid grid-cols-2 gap-4 p-1">
-              <button className="btn-circle w-full h-full text-[10px] font-black tracking-tighter" onClick={() => setActiveModal('list')}>LIST</button>
-              <button className="btn-circle w-full h-full" onClick={() => setIsLandscapeMode(!isLandscapeMode)}>
-                <i className={`fa-solid ${isLandscapeMode ? 'fa-compress text-toffee' : 'fa-expand'}`}></i>
+              <button className="btn-circle w-full h-full text-[10px] font-black" onClick={() => setActiveModal('list')}>LIST</button>
+              <button className="btn-circle w-full h-full" onClick={() => setIsFullScreen(!isFullScreen)}>
+                <i className={`fa-solid ${isFullScreen ? 'fa-compress text-toffee' : 'fa-expand'}`}></i>
               </button>
               <button className="btn-circle w-full h-full" onClick={() => setActiveModal('key')}><i className="fa-solid fa-keyboard"></i></button>
-              <button className="btn-circle w-full h-full text-[10px] font-black tracking-tighter" onClick={() => setActiveModal('guide')}>GUIDE</button>
+              <button className="btn-circle w-full h-full text-[10px] font-black" onClick={() => setActiveModal('guide')}>GUIDE</button>
             </div>
 
             <div className="bg-header border border-border rounded-full flex flex-col justify-between items-center py-5 shadow-2xl">
-               <button className="text-white h-12 w-full active:text-toffee" onClick={() => changeCh(1)}><i className="fa-solid fa-chevron-up text-lg"></i></button>
-               <span className="text-[10px] font-black text-gray-600 uppercase tracking-tighter">CH</span>
-               <button className="text-white h-12 w-full active:text-toffee" onClick={() => changeCh(-1)}><i className="fa-solid fa-chevron-down text-lg"></i></button>
+               <button className="text-white h-12 w-full active:text-toffee" onClick={() => changeCh(1)}><i className="fa-solid fa-chevron-up"></i></button>
+               <span className="text-[10px] font-black text-gray-600 uppercase">CH</span>
+               <button className="text-white h-12 w-full active:text-toffee" onClick={() => changeCh(-1)}><i className="fa-solid fa-chevron-down"></i></button>
             </div>
           </div>
-          
           <div className="text-center text-[11px] font-black text-toffee tracking-[0.3em] uppercase opacity-80 pt-2">
             {categories[currentCatIdx] || 'All Categories'}
           </div>
         </div>
-
-        <div className="text-gray-600 text-[10px] font-black tracking-[0.2em] uppercase underline cursor-pointer hover:text-toffee" onClick={() => setIsRemoteHidden(!isRemoteHidden)}>
-          {isRemoteHidden ? 'Restore Interface' : 'Minimize Controller'}
+        <div className="text-gray-600 text-[10px] font-black tracking-[0.2em] uppercase underline cursor-pointer" onClick={() => setIsRemoteHidden(!isRemoteHidden)}>
+          {isRemoteHidden ? 'Restore Remote' : 'Hide Remote'}
         </div>
       </div>
 
@@ -400,7 +418,7 @@ const App = () => {
             const isActive = realIdx === currentIdx;
             return (
               <div key={ch.id} className="flex flex-col items-center gap-3 cursor-pointer active:scale-90 transition-transform group" onClick={() => playChannel(realIdx)}>
-                <div className={`w-[72px] h-[72px] bg-white rounded-full flex items-center justify-center overflow-hidden border-2 transition-all duration-300 ${isActive ? 'border-toffee shadow-[0_0_20px_rgba(255,0,85,0.4)] scale-105' : 'border-transparent group-hover:border-header'}`}>
+                <div className={`w-[72px] h-[72px] bg-white rounded-full flex items-center justify-center overflow-hidden border-2 transition-all duration-300 ${isActive ? 'border-toffee shadow-[0_0_20px_rgba(255,0,85,0.4)] scale-105' : 'border-transparent'}`}>
                   <img src={ch.logo || `https://via.placeholder.com/60?text=${(ch.name?.[0] || '?').toUpperCase()}`} className="w-[75%] h-[75%] object-contain" alt={ch.name} />
                 </div>
                 <span className="text-[10px] font-bold text-center text-gray-500 line-clamp-1 w-full uppercase tracking-tighter px-1">{ch.name}</span>
@@ -410,7 +428,7 @@ const App = () => {
         </div>
       </section>
 
-      {/* Footer / Dev Profile */}
+      {/* Footer / Dev */}
       <footer className="bg-card p-12 mt-auto border-t border-border text-center">
         <div className="relative inline-block mb-6">
           <img src={devSettings.photo} className="w-20 h-20 rounded-full border-2 border-toffee mx-auto object-cover shadow-[0_0_25px_rgba(255,0,85,0.3)]" alt="Dev" onError={(e) => (e.currentTarget.src = 'https://via.placeholder.com/100?text=Mujahid')} />
@@ -425,14 +443,14 @@ const App = () => {
            <a href="#" className="hover:text-toffee transition-colors"><i className="fa-brands fa-github"></i></a>
            <a href="#" className="hover:text-toffee transition-colors"><i className="fa-brands fa-whatsapp"></i></a>
         </div>
-        <div className="text-[9px] text-gray-800 mt-12 tracking-[0.4em] font-black uppercase opacity-50">© 2026 CLONE ARCHITECTURE BY MUJAHID</div>
+        <div className="text-[9px] text-gray-800 mt-12 tracking-[0.4em] font-black uppercase opacity-50">© 2026 MUJAHID ULTRA PRO</div>
       </footer>
 
-      {/* UI Modals */}
+      {/* Modals */}
       {activeModal && (
         <div className="fixed inset-0 z-[5000] flex items-center justify-center p-5">
           <div className="absolute inset-0 bg-black/95 backdrop-blur-lg" onClick={() => setActiveModal(null)}></div>
-          <div className="relative bg-header border border-toffee/50 rounded-[45px] w-full max-w-[360px] p-10 shadow-[0_0_50px_rgba(0,0,0,0.5)] animate-in zoom-in-90 duration-300">
+          <div className="relative bg-header border border-toffee/50 rounded-[45px] w-full max-w-[360px] p-10 shadow-2xl animate-in zoom-in-90 duration-300">
              {activeModal === 'key' && (
                <>
                  <h3 className="text-xl font-black text-toffee mb-8 text-center uppercase tracking-[0.2em]">DIRECT SEARCH</h3>
@@ -458,19 +476,19 @@ const App = () => {
                        </div>
                     ))}
                  </div>
-                 <button className="w-full mt-10 text-gray-500 font-black text-[11px] uppercase tracking-[0.3em]" onClick={() => setActiveModal(null)}>BACK TO PLAYER</button>
+                 <button className="w-full mt-10 text-gray-500 font-black text-[11px] uppercase tracking-[0.3em]" onClick={() => setActiveModal(null)}>CLOSE</button>
                </>
              )}
              {activeModal === 'guide' && (
                <>
-                 <h3 className="text-xl font-black text-toffee mb-8 text-center uppercase tracking-[0.2em]">GUIDE</h3>
+                 <h3 className="text-xl font-black text-toffee mb-8 text-center uppercase tracking-[0.2em]">HELP GUIDE</h3>
                  <div className="text-[11px] space-y-5 text-gray-400 font-bold uppercase tracking-wider">
                     <div className="flex gap-5 items-center"><i className="fa-solid fa-power-off text-toffee text-xl"></i> START ENGINE BEFORE PLAY</div>
                     <div className="flex gap-5 items-center"><i className="fa-solid fa-expand text-toffee text-xl"></i> ROTATE FOR LANDSCAPE</div>
-                    <div className="flex gap-5 items-center"><i className="fa-solid fa-gear text-toffee text-xl"></i> SETTINGS AT #ADMIN</div>
-                    <div className="flex gap-5 items-center"><i className="fa-solid fa-cloud-arrow-down text-toffee text-xl"></i> AUTO-SYNC TV.MU3 FILE</div>
+                    <div className="flex gap-5 items-center"><i className="fa-solid fa-gear text-toffee text-xl"></i> ADMIN AT #ADMIN HASH</div>
+                    <div className="flex gap-5 items-center"><i className="fa-solid fa-sync text-toffee text-xl"></i> AUTO-SYNCS FROM TV.MU3</div>
                  </div>
-                 <button className="w-full h-16 bg-toffee text-white font-black rounded-full mt-10 shadow-xl" onClick={() => setActiveModal(null)}>I UNDERSTAND</button>
+                 <button className="w-full h-16 bg-toffee text-white font-black rounded-full mt-10 shadow-xl" onClick={() => setActiveModal(null)}>GOT IT</button>
                </>
              )}
           </div>
