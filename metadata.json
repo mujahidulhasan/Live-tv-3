@@ -1,0 +1,8 @@
+{
+  "name": "Toffee Ultra Pro Clone",
+  "description": "High-end mobile friendly IPTV player with advanced controls.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ]
+}

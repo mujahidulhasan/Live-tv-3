@@ -1,0 +1,622 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Toffee Ultra Pro Clone - IPTV</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        :root {
+            --bg-color: #0b010b;
+            --header-bg: #1a021a;
+            --primary-color: #ff0055;
+            --secondary-bg: #120112;
+            --text-color: #ffffff;
+            --muted-text: #888888;
+            --border-color: #222222;
+            --btn-bg: #1a021a;
+            --btn-border: #333333;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: var(--bg-color); color: var(--text-color); overflow-x: hidden; }
+
+        header { display: flex; justify-content: space-between; align-items: center; padding: 12px 20px; background-color: var(--header-bg); border-bottom: 1px solid var(--border-color); sticky top: 0; z-index: 100; }
+        .logo { font-size: 22px; font-weight: 800; color: var(--primary-color); letter-spacing: 1px; }
+        .header-icons { display: flex; gap: 15px; align-items: center; }
+        .header-icons i { font-size: 18px; cursor: pointer; color: var(--text-color); transition: 0.2s; }
+        .header-icons i:hover { color: var(--primary-color); }
+
+        /* Video Section */
+        .video-box { width: 100%; height: 210px; background: #000; display: flex; align-items: center; justify-content: center; position: relative; transition: 0.3s; overflow: hidden; }
+        #videoPlayer { width: 100%; height: 100%; object-fit: contain; }
+        .video-box.full-rot { position: fixed; top: 0; left: 0; width: 100vh; height: 100vw; transform: rotate(90deg); transform-origin: bottom left; z-index: 2000; }
+        
+        #playIconOverlay { position: absolute; font-size: 3rem; color: var(--primary-color); opacity: 0.8; pointer-events: none; transition: 0.3s; }
+        
+        .status-bar { padding: 10px 20px; background: var(--secondary-bg); border-bottom: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: center; font-size: 13px; }
+        .ch-display-name { font-weight: bold; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 70%; }
+        .vol-display-text { color: var(--primary-color); font-weight: bold; }
+
+        /* Remote UI */
+        .remote-area { padding: 20px; display: flex; flex-direction: column; align-items: center; background: var(--bg-color); transition: all 0.3s ease; }
+        .remote-ui { width: 100%; max-width: 320px; display: flex; flex-direction: column; gap: 15px; }
+        .remote-ui.hidden { display: none; }
+        
+        .btn { 
+            background: var(--btn-bg); color: #ddd; border: 1px solid var(--btn-border); cursor: pointer; 
+            display: flex; justify-content: center; align-items: center; transition: 0.2s;
+            width: 55px; height: 55px; border-radius: 50%; outline: none;
+        }
+        .btn:active { background: var(--primary-color); border-color: var(--primary-color); color: #fff; transform: scale(0.95); }
+        .btn i { font-size: 20px; }
+        
+        .row-flex { display: flex; justify-content: space-between; width: 100%; }
+        .media-row { display: flex; justify-content: center; gap: 15px; width: 100%; }
+        .rect-btn { width: 90px; height: 45px; border-radius: 25px; font-size: 11px; font-weight: bold; text-transform: uppercase; }
+
+        .control-grid { display: grid; grid-template-columns: 60px 1fr 60px; gap: 10px; width: 100%; }
+        .vert-ctrl { background: var(--btn-bg); height: 140px; border-radius: 35px; border: 1px solid var(--btn-border); display: flex; flex-direction: column; justify-content: space-between; align-items: center; padding: 10px 0; }
+        .vert-ctrl .btn-mini { background: none; border: none; color: #fff; cursor: pointer; height: 40px; width: 100%; display: flex; align-items: center; justify-content: center; font-size: 18px; }
+        .mini-btns { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+        .mini-btns .btn { width: 100%; height: 65px; border-radius: 12px; font-size: 12px; font-weight: bold; }
+
+        #catDisplay { text-align: center; font-size: 12px; color: var(--primary-color); font-weight: bold; margin-top: 5px; }
+
+        .toggle-remote-text { margin-top: 20px; color: var(--muted-text); cursor: pointer; font-size: 13px; text-decoration: underline; }
+
+        /* Channel Section */
+        .channel-section { padding: 20px; }
+        .cat-title { color: var(--primary-color); font-size: 16px; margin: 20px 0 15px 0; font-weight: bold; border-left: 3px solid var(--primary-color); padding-left: 10px; }
+        .channel-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+        .ch-item { display: flex; flex-direction: column; align-items: center; gap: 8px; cursor: pointer; transition: 0.2s; }
+        .ch-item:active { transform: scale(0.9); }
+        .ch-icon { width: 70px; height: 70px; background: white; border-radius: 50%; display: flex; align-items: center; justify-content: center; overflow: hidden; border: 2px solid transparent; box-shadow: 0 4px 10px rgba(0,0,0,0.5); }
+        .ch-icon img { width: 75%; height: 75%; object-fit: contain; }
+        .ch-item span { font-size: 10px; text-align: center; color: #ccc; font-weight: 500; }
+        .ch-item.active .ch-icon { border-color: var(--primary-color); }
+
+        /* Modals & Popups */
+        .modal { display: none; position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 85%; max-width: 400px; background: var(--header-bg); border: 1px solid var(--primary-color); border-radius: 20px; z-index: 3000; padding: 25px; text-align: center; box-shadow: 0 10px 30px rgba(0,0,0,0.8); }
+        .modal h4 { margin: 0 0 15px 0; font-size: 18px; }
+        .modal input { width: 100%; padding: 15px; background: #000; color: var(--primary-color); border: 1px solid var(--btn-border); font-size: 24px; text-align: center; margin-bottom: 20px; outline: none; border-radius: 10px; }
+        .modal .modal-btn { width: 100%; padding: 12px; background: var(--primary-color); color: white; border: none; border-radius: 10px; font-weight: bold; cursor: pointer; font-size: 16px; }
+        .overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.85); z-index: 2999; backdrop-filter: blur(5px); }
+        
+        #listModal .list-container { max-height: 300px; overflow-y: auto; display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; padding: 10px 0; }
+
+        /* Loading & Toast */
+        .loading-spinner { position: absolute; width: 40px; height: 40px; border: 4px solid rgba(255, 255, 255, 0.1); border-top-color: var(--primary-color); border-radius: 50%; animation: spin 1s linear infinite; display: none; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        
+        .toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%) translateY(100px); background: rgba(0, 0, 0, 0.95); color: white; padding: 10px 20px; border-radius: 25px; z-index: 10000; opacity: 0; transition: all 0.3s ease; font-size: 13px; border: 1px solid var(--primary-color); }
+        .toast.show { transform: translateX(-50%) translateY(0); opacity: 1; }
+
+        /* Footer */
+        footer { background: var(--secondary-bg); padding: 40px 20px; border-top: 1px solid var(--border-color); text-align: center; margin-top: 30px; }
+        .dev-photo { width: 90px; height: 90px; border-radius: 50%; border: 2px solid var(--primary-color); margin-bottom: 15px; object-fit: cover; box-shadow: 0 0 15px var(--primary-color); }
+        .social { margin: 15px 0; }
+        .social a { color: var(--muted-text); margin: 0 12px; font-size: 22px; transition: 0.2s; }
+        .social a:hover { color: var(--primary-color); }
+        .footer-note { font-size: 12px; color: #777; margin: 10px auto; max-width: 300px; line-height: 1.6; }
+        .copyright { font-size: 10px; color: #444; margin-top: 25px; }
+
+        /* Admin UI integration */
+        #adminPanel { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: var(--bg-color); z-index: 4000; display: none; flex-direction: column; }
+        .admin-header { background: var(--header-bg); padding: 15px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border-color); }
+        .close-admin { background: var(--btn-bg); border: none; color: white; width: 40px; height: 40px; border-radius: 50%; cursor: pointer; }
+        .admin-content { flex: 1; overflow-y: auto; padding: 20px; }
+        .admin-section { background: var(--secondary-bg); border-radius: 15px; padding: 15px; margin-bottom: 20px; }
+        .admin-section h4 { color: var(--primary-color); margin-bottom: 15px; display: flex; align-items: center; gap: 8px; }
+        .admin-btn { padding: 10px 15px; border-radius: 8px; border: none; cursor: pointer; font-weight: bold; background: var(--primary-color); color: #fff; margin-right: 5px; margin-bottom: 5px; }
+        .admin-btn.secondary { background: #333; }
+        .admin-textarea { width: 100%; height: 120px; background: #000; border: 1px solid var(--btn-border); color: #fff; border-radius: 10px; padding: 10px; font-family: monospace; margin-bottom: 15px; resize: none; }
+    </style>
+</head>
+<body>
+
+    <header>
+        <div class="logo">TOFFEE</div>
+        <div class="header-icons">
+            <i class="fa-solid fa-magnifying-glass" onclick="openSearch()"></i>
+            <i class="fa-solid fa-gear" onclick="toggleAdminPanel()"></i>
+        </div>
+    </header>
+
+    <div class="video-box" id="mainPlayer">
+        <video id="videoPlayer" playsinline webkit-playsinline></video>
+        <div class="loading-spinner" id="loadingSpinner"></div>
+        <i class="fa-solid fa-play" id="playIconOverlay" style="display: none;"></i>
+    </div>
+
+    <div class="status-bar">
+        <div id="chNameDisplay" class="ch-display-name">Select Channel</div>
+        <div id="volLevelDisplay" class="vol-display-text">Vol: 80%</div>
+    </div>
+
+    <div class="remote-area">
+        <div class="remote-ui" id="remoteBox">
+            <div class="row-flex">
+                <button class="btn" style="color:#ff4444;" id="powerBtn" onclick="togglePower()"><i class="fa-solid fa-power-off"></i></button>
+                <button class="btn" onclick="location.reload()"><i class="fa-solid fa-house"></i></button>
+                <button class="btn" id="muteBtn" onclick="toggleMute()"><i class="fa-solid fa-volume-high"></i></button>
+            </div>
+
+            <div class="media-row">
+                <button class="btn rect-btn" onclick="switchCategory(-1)"><i class="fa-solid fa-chevron-left"></i> CAT</button>
+                <button class="btn" id="playPauseBtn" onclick="togglePlayPause()"><i class="fa-solid fa-pause"></i></button>
+                <button class="btn rect-btn" onclick="switchCategory(1)">CAT <i class="fa-solid fa-chevron-right"></i></button>
+            </div>
+
+            <div class="control-grid">
+                <div class="vert-ctrl">
+                    <button class="btn-mini" onclick="adjustVolume(10)"><i class="fa-solid fa-plus"></i></button>
+                    <span style="font-size: 10px; color:#666; font-weight: bold;">VOL</span>
+                    <button class="btn-mini" onclick="adjustVolume(-10)"><i class="fa-solid fa-minus"></i></button>
+                </div>
+                <div class="mini-btns">
+                    <button class="btn" onclick="openModal('listModal')">LIST</button>
+                    <button class="btn" onclick="toggleOrientation()"><i class="fa-solid fa-expand"></i></button>
+                    <button class="btn" onclick="openModal('keyModal')"><i class="fa-solid fa-keyboard"></i></button>
+                    <button class="btn" onclick="openModal('guideModal')">GUIDE</button>
+                </div>
+                <div class="vert-ctrl">
+                    <button class="btn-mini" onclick="changeChannel(1)"><i class="fa-solid fa-chevron-up"></i></button>
+                    <span style="font-size: 10px; color:#666; font-weight: bold;">CH</span>
+                    <button class="btn-mini" onclick="changeChannel(-1)"><i class="fa-solid fa-chevron-down"></i></button>
+                </div>
+            </div>
+            <div id="catDisplay">Category: All</div>
+        </div>
+        <div onclick="toggleRemoteVisibility()" class="toggle-remote-text">Minimize / Open Remote</div>
+    </div>
+
+    <div class="channel-section" id="dynamicChannelList">
+        <!-- Channels will be injected here by script -->
+    </div>
+
+    <div class="overlay" id="overlay" onclick="closeAllModals()"></div>
+    
+    <!-- Modals -->
+    <div class="modal" id="keyModal">
+        <h4>Enter Channel Number</h4>
+        <input type="number" id="manualChInput" placeholder="001">
+        <button class="modal-btn" onclick="submitManualChannel()">OK</button>
+    </div>
+
+    <div class="modal" id="listModal">
+        <h4>Quick Access</h4>
+        <div class="list-container" id="miniListContainer">
+            <!-- Mini icons here -->
+        </div>
+        <button class="modal-btn" onclick="closeAllModals()" style="margin-top:15px; background:#333;">Close</button>
+    </div>
+
+    <div class="modal" id="guideModal">
+        <h4>User Guide</h4>
+        <p style="font-size:13px; color:#aaa; margin-bottom: 20px;">
+            - Use Keyboard for direct entry.<br>
+            - Expand for 90° landscape mode.<br>
+            - VOL +/- and CH +/- for navigation.<br>
+            - Gear icon for Admin access.
+        </p>
+        <button class="modal-btn" onclick="closeAllModals()">Got it!</button>
+    </div>
+
+    <!-- Admin Panel -->
+    <div id="adminPanel">
+        <div class="admin-header">
+            <h3><i class="fa-solid fa-gear"></i> Admin Panel</h3>
+            <button class="close-admin" onclick="toggleAdminPanel()"><i class="fa-solid fa-times"></i></button>
+        </div>
+        <div class="admin-content">
+            <div class="admin-section">
+                <h4><i class="fa-solid fa-file-import"></i> Quick Import</h4>
+                <button class="admin-btn" onclick="loadLocalFile('tv.m3u')">Load tv.m3u</button>
+                <button class="admin-btn" onclick="loadLocalFile('file.json')">Load file.json</button>
+            </div>
+            <div class="admin-section">
+                <h4><i class="fa-solid fa-pen-to-square"></i> Paste M3U</h4>
+                <textarea class="admin-textarea" id="m3uTextArea" placeholder="Paste M3U content here..."></textarea>
+                <button class="admin-btn" onclick="parseM3UFromText()">Parse M3U</button>
+                <button class="admin-btn secondary" onclick="document.getElementById('m3uTextArea').value=''">Clear</button>
+            </div>
+            <div class="admin-section">
+                <h4><i class="fa-solid fa-list-check"></i> Management</h4>
+                <p style="font-size: 13px; margin-bottom: 10px;">Channels: <span id="adminTotalCount">0</span></p>
+                <button class="admin-btn secondary" onclick="clearAllChannels()">Clear All Channels</button>
+                <button class="admin-btn" onclick="exportChannelData()">Export Data</button>
+            </div>
+        </div>
+    </div>
+
+    <footer>
+        <img src="https://via.placeholder.com/90?text=Mujahid" class="dev-photo" id="footerDevPhoto">
+        <div style="font-weight: 800; color: var(--primary-color); font-size: 18px;" id="footerDevName">Mujahid</div>
+        <p class="footer-note" id="footerDevNote">Hi, I'm Mujahid, a Dhaka Polytechnic student. I love building unique UI experiences.</p>
+        <div class="social">
+            <a href="#" id="linkFb"><i class="fa-brands fa-facebook"></i></a>
+            <a href="#" id="linkGithub"><i class="fa-brands fa-github"></i></a>
+            <a href="#" id="linkWa"><i class="fa-brands fa-whatsapp"></i></a>
+        </div>
+        <p class="copyright">© 2026 Toffee IPTV Clone. Developed by Mujahid.</p>
+    </footer>
+
+    <div class="toast" id="toastBox"></div>
+
+    <script>
+        // State Management
+        let channels = [];
+        let categories = ['All'];
+        let currentChannelIndex = -1;
+        let currentCategoryIndex = 0;
+        let isPowerOn = false;
+        let isMuted = false;
+        let volumeLevel = 80;
+        let errorChannels = new Set();
+        let searchActive = false;
+
+        // DOM Elements
+        const videoPlayer = document.getElementById('videoPlayer');
+        const playIconOverlay = document.getElementById('playIconOverlay');
+        const loadingSpinner = document.getElementById('loadingSpinner');
+        const chNameDisplay = document.getElementById('chNameDisplay');
+        const volLevelDisplay = document.getElementById('volLevelDisplay');
+        const dynamicChannelList = document.getElementById('dynamicChannelList');
+        const catDisplay = document.getElementById('catDisplay');
+        const toastBox = document.getElementById('toastBox');
+        const powerBtn = document.getElementById('powerBtn');
+        const muteBtn = document.getElementById('muteBtn');
+        const playPauseBtn = document.getElementById('playPauseBtn');
+
+        // Init
+        document.addEventListener('DOMContentLoaded', async () => {
+            loadLocalStorageData();
+            await fetchDevInfo();
+            await loadInitialFiles();
+            renderChannelUI();
+        });
+
+        // Functions
+        function loadLocalStorageData() {
+            const saved = localStorage.getItem('iptv_channels');
+            if (saved) {
+                channels = JSON.parse(saved);
+                updateCategoryList();
+            }
+            const savedErrors = localStorage.getItem('iptv_errors');
+            if (savedErrors) {
+                errorChannels = new Set(JSON.parse(savedErrors));
+            }
+        }
+
+        async function fetchDevInfo() {
+            try {
+                const res = await fetch('Ip-tv-main/assets/devinfo.json');
+                if (res.ok) {
+                    const data = await res.json();
+                    const info = data.info;
+                    document.getElementById('footerDevName').innerText = info.owner;
+                    document.getElementById('footerDevNote').innerText = info.note;
+                    document.getElementById('linkFb').href = info.facebook;
+                    document.getElementById('linkGithub').href = info.github;
+                    document.getElementById('linkWa').href = info.support;
+                }
+            } catch (e) { console.error("Dev info error", e); }
+        }
+
+        async function loadInitialFiles() {
+            // Check for tv.m3u or file.json silently
+            try {
+                const res = await fetch('tv.m3u');
+                if (res.ok) parseM3U(await res.text());
+            } catch(e) {}
+            try {
+                const res = await fetch('file.json');
+                if (res.ok) importJSON(await res.json());
+            } catch(e) {}
+        }
+
+        function togglePower() {
+            isPowerOn = !isPowerOn;
+            if (isPowerOn) {
+                powerBtn.style.color = "#44ff44";
+                showToast("TV ON");
+                if (channels.length > 0) {
+                    if (currentChannelIndex === -1) currentChannelIndex = 0;
+                    playChannel();
+                }
+            } else {
+                powerBtn.style.color = "#ff4444";
+                videoPlayer.pause();
+                videoPlayer.src = "";
+                chNameDisplay.innerText = "Power Off";
+                playIconOverlay.style.display = "none";
+                showToast("TV OFF");
+            }
+        }
+
+        function playChannel(index = null) {
+            if (!isPowerOn) return;
+            if (index !== null) currentChannelIndex = index;
+            if (currentChannelIndex < 0 || currentChannelIndex >= channels.length) return;
+
+            const ch = channels[currentChannelIndex];
+            loadingSpinner.style.display = 'block';
+            playIconOverlay.style.display = 'none';
+
+            videoPlayer.src = ch.url;
+            videoPlayer.volume = isMuted ? 0 : volumeLevel / 100;
+            
+            videoPlayer.play().then(() => {
+                loadingSpinner.style.display = 'none';
+                chNameDisplay.innerText = `${ch.name} (Ch ${currentChannelIndex + 1})`;
+                renderChannelUI(); // refresh for active state
+            }).catch(err => {
+                loadingSpinner.style.display = 'none';
+                showToast("Stream error");
+                console.error(err);
+            });
+        }
+
+        function togglePlayPause() {
+            if (!isPowerOn) return;
+            if (videoPlayer.paused) {
+                videoPlayer.play();
+                playPauseBtn.innerHTML = '<i class="fa-solid fa-pause"></i>';
+                playIconOverlay.style.display = "none";
+            } else {
+                videoPlayer.pause();
+                playPauseBtn.innerHTML = '<i class="fa-solid fa-play"></i>';
+                playIconOverlay.style.display = "block";
+            }
+        }
+
+        function adjustVolume(amt) {
+            volumeLevel = Math.max(0, Math.min(100, volumeLevel + amt));
+            volLevelDisplay.innerText = `Vol: ${volumeLevel}%`;
+            if (!isMuted) videoPlayer.volume = volumeLevel / 100;
+            showToast(`Volume ${volumeLevel}%`);
+        }
+
+        function toggleMute() {
+            isMuted = !isMuted;
+            videoPlayer.volume = isMuted ? 0 : volumeLevel / 100;
+            muteBtn.innerHTML = isMuted ? '<i class="fa-solid fa-volume-xmark"></i>' : '<i class="fa-solid fa-volume-high"></i>';
+            showToast(isMuted ? "Muted" : "Unmuted");
+        }
+
+        function changeChannel(dir) {
+            if (!isPowerOn || channels.length === 0) return;
+            currentChannelIndex = (currentChannelIndex + dir + channels.length) % channels.length;
+            playChannel();
+        }
+
+        function switchCategory(dir) {
+            currentCategoryIndex = (currentCategoryIndex + dir + categories.length) % categories.length;
+            catDisplay.innerText = `Category: ${categories[currentCategoryIndex]}`;
+            renderChannelUI();
+            showToast(`Category: ${categories[currentCategoryIndex]}`);
+        }
+
+        function toggleOrientation() {
+            document.getElementById('mainPlayer').classList.toggle('full-rot');
+            showToast("Rotation Toggled");
+        }
+
+        function toggleRemoteVisibility() {
+            document.getElementById('remoteBox').classList.toggle('hidden');
+        }
+
+        function openModal(id) {
+            document.getElementById(id).style.display = 'block';
+            document.getElementById('overlay').style.display = 'block';
+            if (id === 'listModal') renderMiniList();
+        }
+
+        function closeAllModals() {
+            document.querySelectorAll('.modal').forEach(m => m.style.display = 'none');
+            document.getElementById('overlay').style.display = 'none';
+        }
+
+        function submitManualChannel() {
+            const val = parseInt(document.getElementById('manualChInput').value);
+            if (val > 0 && val <= channels.length) {
+                currentChannelIndex = val - 1;
+                if (!isPowerOn) togglePower();
+                playChannel();
+                closeAllModals();
+            } else {
+                showToast("Invalid Ch Number");
+            }
+        }
+
+        function showToast(msg) {
+            toastBox.innerText = msg;
+            toastBox.classList.add('show');
+            setTimeout(() => toastBox.classList.remove('show'), 2500);
+        }
+
+        // Channel Rendering
+        function updateCategoryList() {
+            const set = new Set(['All']);
+            channels.forEach(c => { if(c.category) set.add(c.category); });
+            categories = Array.from(set);
+        }
+
+        function renderChannelUI() {
+            const cat = categories[currentCategoryIndex];
+            const filtered = cat === 'All' ? channels : channels.filter(c => c.category === cat);
+            
+            dynamicChannelList.innerHTML = '';
+            
+            if (filtered.length === 0) {
+                dynamicChannelList.innerHTML = '<p style="text-align:center; color:#555; padding:20px;">No channels found.</p>';
+                return;
+            }
+
+            const title = document.createElement('div');
+            title.className = 'cat-title';
+            title.innerText = cat + ' Channels';
+            dynamicChannelList.appendChild(title);
+
+            const grid = document.createElement('div');
+            grid.className = 'channel-grid';
+
+            filtered.forEach(ch => {
+                const originalIndex = channels.indexOf(ch);
+                const item = document.createElement('div');
+                item.className = `ch-item ${originalIndex === currentChannelIndex ? 'active' : ''}`;
+                item.onclick = () => {
+                    if (!isPowerOn) togglePower();
+                    playChannel(originalIndex);
+                };
+
+                const iconBox = document.createElement('div');
+                iconBox.className = 'ch-icon';
+                const img = document.createElement('img');
+                img.src = ch.logo || `https://via.placeholder.com/70?text=${ch.name.charAt(0)}`;
+                iconBox.appendChild(img);
+
+                const span = document.createElement('span');
+                span.innerText = ch.name;
+
+                item.appendChild(iconBox);
+                item.appendChild(span);
+                grid.appendChild(item);
+            });
+
+            dynamicChannelList.appendChild(grid);
+        }
+
+        function renderMiniList() {
+            const container = document.getElementById('miniListContainer');
+            container.innerHTML = '';
+            channels.slice(0, 12).forEach((ch, idx) => {
+                const div = document.createElement('div');
+                div.className = 'ch-icon';
+                div.style.width = '50px'; div.style.height = '50px';
+                div.onclick = () => { playChannel(idx); closeAllModals(); };
+                const img = document.createElement('img');
+                img.src = ch.logo || `https://via.placeholder.com/50?text=${ch.name.charAt(0)}`;
+                div.appendChild(img);
+                container.appendChild(div);
+            });
+        }
+
+        // Admin Logics
+        function toggleAdminPanel() {
+            const p = document.getElementById('adminPanel');
+            p.style.display = p.style.display === 'flex' ? 'none' : 'flex';
+            document.getElementById('adminTotalCount').innerText = channels.length;
+        }
+
+        async function loadLocalFile(name) {
+            try {
+                const res = await fetch(name);
+                if (!res.ok) throw new Error("File not found");
+                const text = await res.text();
+                if (name.endsWith('.m3u') || name.endsWith('.m3u8')) parseM3U(text);
+                else importJSON(JSON.parse(text));
+                showToast("File Loaded Successfully");
+            } catch(e) { showToast(e.message); }
+        }
+
+        function parseM3UFromText() {
+            const text = document.getElementById('m3uTextArea').value;
+            if (text) parseM3U(text);
+        }
+
+        function parseM3U(data) {
+            const lines = data.split('\n');
+            const newChannels = [];
+            let current = null;
+
+            lines.forEach(line => {
+                line = line.trim();
+                if (line.startsWith('#EXTINF:')) {
+                    current = { id: Date.now() + Math.random(), name: 'Unknown', url: '', category: 'General', logo: '' };
+                    const nameMatch = line.match(/,(.+)$/);
+                    if (nameMatch) current.name = nameMatch[1];
+                    const groupMatch = line.match(/group-title="([^"]+)"/);
+                    if (groupMatch) current.category = groupMatch[1];
+                    const logoMatch = line.match(/tvg-logo="([^"]+)"/);
+                    if (logoMatch) current.logo = logoMatch[1];
+                } else if (line && !line.startsWith('#') && current) {
+                    current.url = line;
+                    newChannels.push(current);
+                    current = null;
+                }
+            });
+
+            if (newChannels.length > 0) {
+                channels = [...channels, ...newChannels];
+                saveToLocal();
+                updateCategoryList();
+                renderChannelUI();
+                showToast(`Imported ${newChannels.length} channels`);
+            }
+        }
+
+        function importJSON(data) {
+            let list = Array.isArray(data) ? data : (data.channels || []);
+            if (list.length > 0) {
+                channels = [...channels, ...list];
+                saveToLocal();
+                updateCategoryList();
+                renderChannelUI();
+                showToast(`Imported ${list.length} channels`);
+            }
+        }
+
+        function clearAllChannels() {
+            if (confirm("Clear all channels?")) {
+                channels = [];
+                saveToLocal();
+                updateCategoryList();
+                renderChannelUI();
+                showToast("Cleared All");
+            }
+        }
+
+        function saveToLocal() {
+            localStorage.setItem('iptv_channels', JSON.stringify(channels));
+            document.getElementById('adminTotalCount').innerText = channels.length;
+        }
+
+        function exportChannelData() {
+            const blob = new Blob([JSON.stringify(channels, null, 2)], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = "iptv_export.json";
+            a.click();
+            showToast("Exported");
+        }
+
+        function openSearch() {
+            const q = prompt("Enter Channel Name:");
+            if (q) {
+                const idx = channels.findIndex(c => c.name.toLowerCase().includes(q.toLowerCase()));
+                if (idx !== -1) {
+                    if (!isPowerOn) togglePower();
+                    playChannel(idx);
+                } else {
+                    showToast("Not found");
+                }
+            }
+        }
+
+        // Accessibility - Keyboard Controls
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'ArrowUp') changeChannel(1);
+            if (e.key === 'ArrowDown') changeChannel(-1);
+            if (e.key === 'ArrowRight') adjustVolume(10);
+            if (e.key === 'ArrowLeft') adjustVolume(-10);
+            if (e.key === ' ') togglePlayPause();
+        });
+
+    </script>
+</body>
+</html>
